@@ -25,11 +25,14 @@ The interface should feel like a compact monitoring console rather than a market
 - Rename the `API` navigation item to `设置`.
 - Make Settings compact: Base URL, API Key, Model, save/test actions, API status, and update check in one dense page.
 - Add a manual `检测更新` action that checks the GitHub latest release and reports whether a newer version exists.
+- Enable `下载并安装` only when the latest release contains `AStockBriefingManager-clean.zip`; keep it disabled in source/debug mode or when no installable asset exists.
 - Keep the close-window behavior: when background service is active, ask whether to minimize to taskbar, stop service and exit, or cancel.
 
 ## Data Safety
 
 The UI and release package must not expose or bundle local personal data. API keys, SMTP auth codes, recipients, holdings, reports, and logs stay local to each user.
+
+The auto-updater must copy only safe package files from the downloaded release and skip `daily_briefing/data`, `daily_briefing/logs`, and `.env`.
 
 ## Verification
 

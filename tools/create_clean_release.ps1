@@ -91,13 +91,15 @@ First use:
 5. Open stocks, add your own stocks or holdings.
 6. Use Schedule to manually preview/send reports.
 7. Use Settings to check whether a newer release is available.
-8. Use Service Status to install or enable scheduled tasks.
+8. If Settings shows a newer release, click Download and Install to update this app automatically.
+9. Use Service Status to install or enable scheduled tasks.
 
 Notes:
 - This package includes the Python runtime inside the EXE. Codex is not required.
 - User settings are stored in daily_briefing\data\service_settings.json.
 - Generated reports are stored in daily_briefing\data\reports.
 - Logs are stored in daily_briefing\logs.
+- Automatic updates preserve daily_briefing\data, daily_briefing\logs, and .env.
 - This clean package contains no personal API key, email, recipients, or stock holdings.
 - The reports are for research only and are not investment advice.
 '@

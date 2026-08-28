@@ -1,4 +1,7 @@
+import zipfile
 from pathlib import Path
+
+import pytest
 
 import tools.tradingagents_service_manager as manager
 from tools.tradingagents_service_manager import (
@@ -453,6 +456,15 @@ def test_check_latest_release_detects_newer_release():
             return {
                 "tag_name": "v0.2.1",
                 "html_url": "https://github.com/felix1709/AAAA-felix-gupiao/releases/tag/v0.2.1",
+                "assets": [
+                    {
+                        "name": "AStockBriefingManager-clean.zip",
+                        "browser_download_url": (
+                            "https://github.com/felix1709/AAAA-felix-gupiao/releases/"
+                            "download/v0.2.1/AStockBriefingManager-clean.zip"
+                        ),
+                    }
+                ],
             }
 
     calls = []
@@ -466,8 +478,107 @@ def test_check_latest_release_detects_newer_release():
     assert result.ok is True
     assert result.has_update is True
     assert result.latest_version == "v0.2.1"
+    assert result.asset_name == "AStockBriefingManager-clean.zip"
+    assert result.asset_download_url.endswith("/AStockBriefingManager-clean.zip")
     assert "发现新版本" in result.message
     assert calls[0][0].endswith("/releases/latest")
+
+
+def test_check_latest_release_reports_missing_install_package():
+    class FakeResponse:
+        status_code = 200
+
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {
+                "tag_name": "v0.2.2",
+                "html_url": "https://github.com/felix1709/AAAA-felix-gupiao/releases/tag/v0.2.2",
+                "assets": [],
+            }
+
+    result = manager.check_latest_release(current_version="0.2.1", request_get=lambda *_a, **_k: FakeResponse())
+
+    assert result.ok is True
+    assert result.has_update is True
+    assert result.asset_download_url == ""
+    assert "未找到可自动安装的 zip 包" in result.message
+
+
+def test_update_manifest_skips_user_data_and_logs(tmp_path):
+    package_root = tmp_path / "AStockBriefingManager-clean"
+    (package_root / "daily_briefing" / "data").mkdir(parents=True)
+    (package_root / "daily_briefing" / "logs").mkdir(parents=True)
+    (package_root / "AStockBriefingManager.exe").write_text("exe", encoding="utf-8")
+    (package_root / "StartManager.bat").write_text("start", encoding="utf-8")
+    (package_root / "daily_briefing" / ".env").write_text("secret", encoding="utf-8")
+    (package_root / "daily_briefing" / ".env.example").write_text("example", encoding="utf-8")
+    (package_root / "daily_briefing" / "data" / "service_settings.json").write_text(
+        "secret settings",
+        encoding="utf-8",
+    )
+    (package_root / "daily_briefing" / "logs" / "service.log").write_text("log", encoding="utf-8")
+
+    manifest = manager.build_update_file_manifest(package_root)
+
+    assert Path("AStockBriefingManager.exe") in manifest
+    assert Path("StartManager.bat") in manifest
+    assert Path("daily_briefing/.env.example") in manifest
+    assert Path("daily_briefing/.env") not in manifest
+    assert Path("daily_briefing/data/service_settings.json") not in manifest
+    assert Path("daily_briefing/logs/service.log") not in manifest
+
+
+def test_find_update_package_root_supports_nested_clean_release(tmp_path):
+    extract_root = tmp_path / "extract"
+    package_root = extract_root / "AStockBriefingManager-clean"
+    package_root.mkdir(parents=True)
+    (package_root / "AStockBriefingManager.exe").write_text("exe", encoding="utf-8")
+
+    assert manager.find_update_package_root(extract_root) == package_root
+
+
+def test_extract_update_archive_rejects_paths_outside_target(tmp_path):
+    archive_path = tmp_path / "bad.zip"
+    extract_root = tmp_path / "extract"
+    with zipfile.ZipFile(archive_path, "w") as archive:
+        archive.writestr("../escape.txt", "bad")
+
+    with pytest.raises(ValueError, match="不安全"):
+        manager.extract_update_archive(archive_path, extract_root)
+
+
+def test_write_update_script_copies_manifest_without_sensitive_files(tmp_path):
+    package_root = tmp_path / "package"
+    install_root = tmp_path / "install"
+    script_path = tmp_path / "install_update.ps1"
+    package_root.mkdir()
+    install_root.mkdir()
+
+    script = manager.write_update_script(
+        package_root=package_root,
+        install_root=install_root,
+        current_executable=install_root / "AStockBriefingManager.exe",
+        current_pid=1234,
+        manifest=[
+            Path("AStockBriefingManager.exe"),
+            Path("StartManager.bat"),
+            Path("daily_briefing/.env.example"),
+        ],
+        script_path=script_path,
+        temp_root=tmp_path,
+    )
+
+    content = Path(script).read_text(encoding="utf-8")
+
+    assert "$PidToWait = 1234" in content
+    assert "AStockBriefingManager.exe" in content
+    assert "StartManager.bat" in content
+    assert ".env.example" in content
+    assert "service_settings.json" not in content
+    assert "daily_briefing\\logs" not in content
+    assert "Start-Process" in content
 
 
 def test_update_check_result_restores_button_state():
@@ -488,6 +599,7 @@ def test_update_check_result_restores_button_state():
     app = ServiceManagerApp.__new__(ServiceManagerApp)
     app.update_check_status = FakeVar()
     app.update_check_button = FakeButton()
+    app.install_update_button = FakeButton()
 
     message = app._format_update_check_result(
         manager.UpdateCheckResult(
@@ -501,6 +613,42 @@ def test_update_check_result_restores_button_state():
     assert message == "当前已是最新版本。"
     assert app.update_check_status.value == "当前已是最新版本。"
     assert app.update_check_button.state == "normal"
+    assert app.install_update_button.state == "disabled"
+
+
+def test_update_check_result_enables_install_button_when_package_is_available():
+    class FakeVar:
+        def __init__(self):
+            self.value = ""
+
+        def set(self, value):
+            self.value = value
+
+    class FakeButton:
+        def __init__(self):
+            self.state = "disabled"
+
+        def configure(self, **kwargs):
+            self.state = kwargs["state"]
+
+    app = ServiceManagerApp.__new__(ServiceManagerApp)
+    app.update_check_status = FakeVar()
+    app.update_check_button = FakeButton()
+    app.install_update_button = FakeButton()
+
+    app._format_update_check_result(
+        manager.UpdateCheckResult(
+            ok=True,
+            has_update=True,
+            latest_version="v0.2.2",
+            message="发现新版本 v0.2.2，可一键下载并安装。",
+            asset_download_url="https://example.com/AStockBriefingManager-clean.zip",
+            asset_name="AStockBriefingManager-clean.zip",
+        )
+    )
+
+    assert app.latest_update_result.asset_download_url.endswith(".zip")
+    assert app.install_update_button.state == "normal"
 
 
 def test_window_close_handler_is_registered(monkeypatch):

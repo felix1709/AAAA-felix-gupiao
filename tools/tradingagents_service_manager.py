@@ -7,8 +7,10 @@ import re
 import shutil
 import subprocess
 import sys
+import tempfile
 import threading
 import tkinter as tk
+import zipfile
 from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import datetime
@@ -73,11 +75,12 @@ LAUNCHER_SCRIPT_NAME = "start_service_manager.bat"
 PACKAGED_EXE_NAME = "astockbriefingmanager.exe"
 APP_TITLE = "A股每日简报服务管理器"
 APP_RUNNING_TITLE = f"{APP_TITLE} - 后台运行中"
-APP_VERSION = "0.2.1"
+APP_VERSION = "0.2.2"
 GITHUB_REPO_URL = "https://github.com/felix1709/AAAA-felix-gupiao"
 GITHUB_LATEST_RELEASE_API = (
     "https://api.github.com/repos/felix1709/AAAA-felix-gupiao/releases/latest"
 )
+RELEASE_ASSET_NAME = "AStockBriefingManager-clean.zip"
 BRIEFING_SCRIPT_NAME = "run_briefing.py"
 SERVICE_PROCESS_NAMES = {
     "python.exe",
@@ -172,6 +175,16 @@ class UpdateCheckResult:
     latest_version: str
     message: str
     release_url: str = ""
+    asset_name: str = ""
+    asset_download_url: str = ""
+
+
+@dataclass(frozen=True)
+class UpdateInstallResult:
+    ok: bool
+    message: str
+    script_path: str = ""
+    package_root: str = ""
 
 
 def _version_numbers(value: str) -> tuple[int, ...]:
@@ -186,6 +199,28 @@ def is_newer_version(current: str, latest: str) -> bool:
     current_padded = current_parts + (0,) * (length - len(current_parts))
     latest_padded = latest_parts + (0,) * (length - len(latest_parts))
     return latest_padded > current_padded
+
+
+def find_release_zip_asset(release_data: dict) -> tuple[str, str]:
+    assets = release_data.get("assets")
+    if not isinstance(assets, list):
+        return "", ""
+
+    normalized_name = RELEASE_ASSET_NAME.casefold()
+    zip_assets: list[tuple[str, str]] = []
+    for asset in assets:
+        if not isinstance(asset, dict):
+            continue
+        name = str(asset.get("name") or "").strip()
+        download_url = str(asset.get("browser_download_url") or "").strip()
+        if not name or not download_url:
+            continue
+        if name.casefold() == normalized_name:
+            return name, download_url
+        if name.casefold().endswith(".zip"):
+            zip_assets.append((name, download_url))
+
+    return zip_assets[0] if zip_assets else ("", "")
 
 
 def check_latest_release(
@@ -225,12 +260,223 @@ def check_latest_release(
     if not latest_version:
         return UpdateCheckResult(False, False, "", "检测更新失败：没有读取到最新版本号。")
 
+    asset_name, asset_download_url = find_release_zip_asset(data)
     has_update = is_newer_version(current_version, latest_version)
     if has_update:
-        message = f"发现新版本 {latest_version}，请到 GitHub Release 下载更新包。"
+        if asset_download_url:
+            message = f"发现新版本 {latest_version}，可一键下载并安装。"
+        else:
+            message = f"发现新版本 {latest_version}，但未找到可自动安装的 zip 包。"
     else:
         message = f"当前已是最新版本（{current_version}）。"
-    return UpdateCheckResult(True, has_update, latest_version, message, release_url)
+    return UpdateCheckResult(
+        True,
+        has_update,
+        latest_version,
+        message,
+        release_url,
+        asset_name,
+        asset_download_url,
+    )
+
+
+def _is_sensitive_update_path(relative_path: Path) -> bool:
+    parts = tuple(part.casefold() for part in relative_path.parts)
+    if relative_path.name.casefold() == ".env":
+        return True
+    return len(parts) >= 2 and parts[0] == "daily_briefing" and parts[1] in {"data", "logs"}
+
+
+def build_update_file_manifest(package_root: Path) -> list[Path]:
+    package_root = Path(package_root)
+    files: list[Path] = []
+    for item in package_root.rglob("*"):
+        if not item.is_file():
+            continue
+        relative_path = item.relative_to(package_root)
+        if _is_sensitive_update_path(relative_path):
+            continue
+        files.append(relative_path)
+    return sorted(files, key=lambda path: tuple(part.casefold() for part in path.parts))
+
+
+def find_update_package_root(extract_root: Path) -> Path:
+    extract_root = Path(extract_root)
+    for item in extract_root.iterdir():
+        if item.is_file() and item.name.casefold() == PACKAGED_EXE_NAME:
+            return extract_root
+
+    candidates = [
+        item.parent
+        for item in extract_root.rglob("*")
+        if item.is_file() and item.name.casefold() == PACKAGED_EXE_NAME
+    ]
+    if not candidates:
+        raise ValueError("更新包中没有找到 AStockBriefingManager.exe。")
+    return sorted(candidates, key=lambda path: (len(path.parts), str(path).casefold()))[0]
+
+
+def _is_path_relative_to(path: Path, parent: Path) -> bool:
+    try:
+        path.relative_to(parent)
+    except ValueError:
+        return False
+    return True
+
+
+def extract_update_archive(archive_path: Path, extract_root: Path) -> None:
+    archive_path = Path(archive_path)
+    extract_root = Path(extract_root).resolve()
+    extract_root.mkdir(parents=True, exist_ok=True)
+    with zipfile.ZipFile(archive_path) as archive:
+        for member in archive.infolist():
+            member_name = member.filename.replace("\\", "/")
+            target_path = (extract_root / member_name).resolve()
+            if not _is_path_relative_to(target_path, extract_root):
+                raise ValueError(f"更新包包含不安全路径：{member.filename}")
+        archive.extractall(extract_root)
+
+
+def _powershell_literal(value: object) -> str:
+    return "'" + str(value).replace("'", "''") + "'"
+
+
+def write_update_script(
+    *,
+    package_root: Path,
+    install_root: Path,
+    current_executable: Path,
+    current_pid: int,
+    manifest: list[Path] | None = None,
+    script_path: Path | None = None,
+    temp_root: Path | None = None,
+) -> Path:
+    package_root = Path(package_root).resolve()
+    install_root = Path(install_root).resolve()
+    current_executable = Path(current_executable).resolve()
+    temp_root = Path(temp_root or package_root.parent).resolve()
+    script_path = Path(script_path or temp_root / "install_update.ps1").resolve()
+    manifest = manifest if manifest is not None else build_update_file_manifest(package_root)
+
+    files = "\n".join(
+        f"    {_powershell_literal(str(relative_path))}"
+        for relative_path in manifest
+        if not _is_sensitive_update_path(relative_path)
+    )
+    script = f"""$ErrorActionPreference = 'Stop'
+$PidToWait = {int(current_pid)}
+$SourceRoot = {_powershell_literal(package_root)}
+$InstallRoot = {_powershell_literal(install_root)}
+$ExePath = {_powershell_literal(current_executable)}
+
+try {{
+    Wait-Process -Id $PidToWait -Timeout 120 -ErrorAction SilentlyContinue
+}} catch {{
+}}
+Start-Sleep -Milliseconds 800
+
+$Files = @(
+{files}
+)
+
+foreach ($Relative in $Files) {{
+    $Source = Join-Path $SourceRoot $Relative
+    $Destination = Join-Path $InstallRoot $Relative
+    $DestinationDir = Split-Path -Parent $Destination
+    if (!(Test-Path -LiteralPath $DestinationDir)) {{
+        New-Item -ItemType Directory -Path $DestinationDir -Force | Out-Null
+    }}
+    Copy-Item -LiteralPath $Source -Destination $Destination -Force
+}}
+
+Start-Process -FilePath $ExePath -WorkingDirectory $InstallRoot
+"""
+    script_path.parent.mkdir(parents=True, exist_ok=True)
+    script_path.write_text(script, encoding="utf-8")
+    return script_path
+
+
+def _download_file(
+    url: str,
+    destination: Path,
+    *,
+    request_get=requests.get,
+    timeout: int = 60,
+) -> None:
+    response = request_get(url, stream=True, timeout=timeout)
+    response.raise_for_status()
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    with destination.open("wb") as handle:
+        for chunk in response.iter_content(chunk_size=1024 * 1024):
+            if chunk:
+                handle.write(chunk)
+    if destination.stat().st_size == 0:
+        raise ValueError("下载到的更新包为空。")
+
+
+def start_update_installation(
+    update: UpdateCheckResult,
+    *,
+    request_get=requests.get,
+    popen=subprocess.Popen,
+    current_executable: Path | None = None,
+    current_pid: int | None = None,
+    install_root: Path | None = None,
+    temp_root_factory=tempfile.mkdtemp,
+) -> UpdateInstallResult:
+    if not update.has_update:
+        return UpdateInstallResult(False, "当前已经是最新版本，无需安装更新。")
+    if not update.asset_download_url:
+        return UpdateInstallResult(False, "没有找到可自动安装的更新包，请到 GitHub Release 手动下载。")
+    if os.name != "nt":
+        return UpdateInstallResult(False, "自动安装更新目前仅支持 Windows 发布版。")
+
+    current_executable = Path(current_executable or sys.executable).resolve()
+    if current_executable.name.casefold() != PACKAGED_EXE_NAME:
+        return UpdateInstallResult(False, "当前是源码调试模式，请使用发布版 EXE 执行一键更新。")
+
+    install_root = Path(install_root or current_executable.parent).resolve()
+    current_pid = int(current_pid or os.getpid())
+    temp_root = Path(temp_root_factory(prefix="astock-update-")).resolve()
+    archive_path = temp_root / (update.asset_name or RELEASE_ASSET_NAME)
+    extract_root = temp_root / "extracted"
+
+    _download_file(update.asset_download_url, archive_path, request_get=request_get)
+    extract_root.mkdir(parents=True, exist_ok=True)
+    extract_update_archive(archive_path, extract_root)
+
+    package_root = find_update_package_root(extract_root)
+    manifest = build_update_file_manifest(package_root)
+    if not any(path.name.casefold() == PACKAGED_EXE_NAME for path in manifest):
+        return UpdateInstallResult(False, "更新包中没有找到主程序，已取消安装。")
+
+    script_path = write_update_script(
+        package_root=package_root,
+        install_root=install_root,
+        current_executable=current_executable,
+        current_pid=current_pid,
+        manifest=manifest,
+        temp_root=temp_root,
+    )
+    powershell = shutil.which("powershell.exe") or shutil.which("pwsh.exe") or "powershell.exe"
+    popen(
+        [
+            powershell,
+            "-NoProfile",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-File",
+            str(script_path),
+        ],
+        cwd=str(temp_root),
+        creationflags=CREATE_NO_WINDOW,
+    )
+    return UpdateInstallResult(
+        True,
+        "更新程序已启动，当前窗口将关闭。安装完成后会自动重新打开新版。",
+        str(script_path),
+        str(package_root),
+    )
 
 
 def _normalized_text(value: object) -> str:
@@ -683,6 +929,7 @@ class ServiceManagerApp:
         self.api_key_hint = tk.StringVar(value="未填写 API Key")
         self.api_test_status = tk.StringVar(value="未测试")
         self.update_check_status = tk.StringVar(value=f"当前版本 {APP_VERSION}")
+        self.latest_update_result: UpdateCheckResult | None = None
         self.stock_vars: dict[str, tk.StringVar] = {
             "code": tk.StringVar(),
             "name": tk.StringVar(),
@@ -1058,7 +1305,7 @@ class ServiceManagerApp:
         recipients_page = self._create_page("recipients", "邮箱", "配置发件邮箱和收件人。")
         stocks_page = self._create_page("stocks", "股票", "维护关注股票、持仓数量和风险线。")
         schedule_page = self._create_page("schedule", "定时", "查看发送时间，也可以手动生成或发送简报。")
-        settings_page = self._create_page("settings", "设置", "配置接口、模型，并检查是否有新版本。")
+        settings_page = self._create_page("settings", "设置", "配置接口、模型，并检查/安装新版本。")
         logs_page = self._create_page("logs", "日志", "查看本次窗口打开后的操作记录。")
 
         self._build_overview_tab(overview_page)
@@ -1721,6 +1968,14 @@ class ServiceManagerApp:
             command=self.check_for_updates,
         )
         self.update_check_button.pack(side="left")
+        self.install_update_button = ttk.Button(
+            update_actions,
+            text="下载并安装",
+            style="Primary.TButton",
+            command=self.install_update,
+        )
+        self.install_update_button.pack(side="left", padx=(8, 0))
+        self.install_update_button.configure(state="disabled")
         tk.Label(
             update_actions,
             textvariable=self.update_check_status,
@@ -2068,6 +2323,14 @@ class ServiceManagerApp:
             self.update_check_status.set("检测更新失败")
             if hasattr(self, "update_check_button"):
                 self.update_check_button.configure(state="normal")
+            if hasattr(self, "install_update_button"):
+                self.install_update_button.configure(state="disabled")
+        if label == "安装更新":
+            self.update_check_status.set("安装更新失败")
+            if hasattr(self, "update_check_button"):
+                self.update_check_button.configure(state="normal")
+            if hasattr(self, "install_update_button"):
+                self.install_update_button.configure(state="normal")
         self._append_log(f"{label} 失败：{error_message}")
 
     def test_api_connection(self) -> None:
@@ -2104,9 +2367,58 @@ class ServiceManagerApp:
         )
 
     def _format_update_check_result(self, result: UpdateCheckResult) -> str:
+        self.latest_update_result = result
         self.update_check_status.set(result.message)
         if hasattr(self, "update_check_button"):
             self.update_check_button.configure(state="normal")
+        install_state = "normal" if result.ok and result.has_update and result.asset_download_url else "disabled"
+        if hasattr(self, "install_update_button"):
+            self.install_update_button.configure(state=install_state)
+        return result.message
+
+    def install_update(self) -> None:
+        update = getattr(self, "latest_update_result", None)
+        if update is None:
+            messagebox.showinfo("请先检测更新", "请先点击“检测更新”，确认有新版本后再安装。")
+            return
+        if not update.has_update:
+            messagebox.showinfo("无需更新", "当前已经是最新版本。")
+            return
+        if not update.asset_download_url:
+            messagebox.showwarning("无法自动安装", "最新版本没有可自动安装的 zip 包，请到 GitHub Release 手动下载。")
+            return
+        if os.name != "nt" or Path(sys.executable).name.casefold() != PACKAGED_EXE_NAME:
+            messagebox.showwarning("当前不能自动安装", "一键自动安装只支持从发布版 EXE 中运行。")
+            return
+        if not messagebox.askyesno(
+            "安装更新",
+            f"将下载并安装 {update.latest_version}。\n\n"
+            "程序会自动关闭，安装完成后重新打开；你的邮箱、API Key、股票和持仓设置会保留。",
+        ):
+            return
+
+        self.update_check_status.set(f"正在下载 {update.latest_version}...")
+        if hasattr(self, "update_check_button"):
+            self.update_check_button.configure(state="disabled")
+        if hasattr(self, "install_update_button"):
+            self.install_update_button.configure(state="disabled")
+        self._run_background(
+            "安装更新",
+            lambda: start_update_installation(update),
+            self._format_update_install_result,
+            refresh_after=False,
+        )
+
+    def _format_update_install_result(self, result: UpdateInstallResult) -> str:
+        self.update_check_status.set(result.message)
+        if hasattr(self, "update_check_button"):
+            self.update_check_button.configure(state="normal")
+        if hasattr(self, "install_update_button"):
+            self.install_update_button.configure(state="disabled" if result.ok else "normal")
+        if result.ok:
+            self.root.after(800, self.root.destroy)
+        else:
+            messagebox.showwarning("安装更新", result.message)
         return result.message
 
     def register_tasks(self) -> None:

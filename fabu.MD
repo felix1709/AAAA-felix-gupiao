@@ -23,7 +23,7 @@ gh auth status -h github.com
 
 1. 提交代码和文档到 Git 仓库。
 2. 构建干净的 Windows 可分发包。
-3. 创建 GitHub Release 并上传 zip，让用户可以下载安装。
+3. 创建 GitHub Release 并上传 zip，让用户可以下载安装，也让已安装的新版客户端可以一键下载并安装后续更新。
 
 ## 2. 固定项目信息
 
@@ -71,7 +71,7 @@ git config user.email
 
 ## 5. 版本号规则
 
-管理器界面和更新检查使用：
+管理器界面、更新检查和一键更新使用：
 
 ```powershell
 Select-String -Path tools\tradingagents_service_manager.py -Pattern 'APP_VERSION'
@@ -174,11 +174,11 @@ tag 格式固定为 `vAPP_VERSION`，例如 `v0.2.1`。
 如果 Release 不存在：
 
 ```powershell
-gh release create v0.2.1 `
+gh release create v0.2.2 `
   --repo felix1709/AAAA-felix-gupiao `
   --target main `
-  --title "AStock Briefing Manager v0.2.1" `
-  --notes "本版本包含 AStock Briefing Manager Windows 可视化管理器、定时服务控制、设置页、更新检测和干净可分发包。" `
+  --title "AStock Briefing Manager v0.2.2" `
+  --notes "本版本包含 AStock Briefing Manager Windows 可视化管理器、定时服务控制、设置页、更新检测/一键安装更新和干净可分发包。" `
   'C:\Users\admin\Documents\ChatGPT\A沪深\release\AStockBriefingManager-clean.zip'
 ```
 
@@ -189,7 +189,7 @@ gh release create v0.2.1 `
 发布后检查：
 
 ```powershell
-gh release view v0.2.1 --repo felix1709/AAAA-felix-gupiao
+gh release view v0.2.2 --repo felix1709/AAAA-felix-gupiao
 ```
 
 必须确认：
@@ -197,7 +197,8 @@ gh release view v0.2.1 --repo felix1709/AAAA-felix-gupiao
 - Release tag 存在。
 - 资产里有 `AStockBriefingManager-clean.zip`。
 - zip 是干净发布包。
-- 设置页“检测更新”可以读到 GitHub 最新 Release。
+- 设置页“检测更新”可以读到 GitHub 最新 Release，并能识别 `AStockBriefingManager-clean.zip` 作为可自动安装资产。
+- 一键更新逻辑不会覆盖 `daily_briefing\data`、`daily_briefing\logs` 或 `.env`。
 
 ## 14. 最终回复用户
 

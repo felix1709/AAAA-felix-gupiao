@@ -38,7 +38,7 @@ When the user says "提交发布", "提交&发布", "发布", "同步发布", or
   - the clean zip asset is attached to the release,
   - the clean package contains no personal API key, SMTP auth code, email recipients, stock watchlist, holding data, generated reports, or logs,
   - the app can launch in smoke-test mode from the clean package.
-- The app currently checks GitHub Releases manually from the Settings page. It does not auto-install updates.
+- The app checks GitHub Releases from the Settings page. When a newer release has `AStockBriefingManager-clean.zip`, the installed EXE can download and install it automatically while preserving each user's local settings, reports, and logs.
 
 ## Local Data Boundary
 

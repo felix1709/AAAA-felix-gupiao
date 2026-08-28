@@ -81,6 +81,6 @@ Each user must configure their own API, email, recipients, and stocks from the a
 
 ## Update Check Behavior
 
-The Settings page includes a manual update check. It checks the GitHub repository for the latest release tag and reports whether a newer version is available.
+The Settings page includes a manual update check. It checks the GitHub repository for the latest release tag and reads the release assets.
 
-The app does not auto-install updates. Users download the release zip manually and replace their local folder after backing up their own `daily_briefing/data/service_settings.json`.
+When a newer release includes `AStockBriefingManager-clean.zip`, the installed EXE enables `下载并安装`. The app downloads the zip, extracts it to a temporary folder, writes an updater PowerShell script, closes the current window, copies only safe package files, and relaunches the EXE. The updater must not overwrite `daily_briefing/data`, `daily_briefing/logs`, or `.env`, so each user's API key, email settings, recipients, watchlist, holdings, reports, and logs stay local.

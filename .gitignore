@@ -39,6 +39,11 @@ AStockBriefingManager*.zip
 release/
 ../release/
 ../AStockBriefingManager.exe
+daily_briefing/.env
+daily_briefing/data/service_settings.json
+daily_briefing/data/monitor_state.json
+daily_briefing/data/reports/
+daily_briefing/logs/
 ../daily_briefing/data/service_settings.json
 ../daily_briefing/data/monitor_state.json
 ../daily_briefing/data/reports/

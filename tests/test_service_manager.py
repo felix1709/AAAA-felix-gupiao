@@ -9,11 +9,13 @@ from tools.tradingagents_service_manager import (
     build_briefing_task_action,
     collect_process_tree,
     find_tradingagents_processes,
+    resolve_briefing_dir,
     resolve_project_root_from_anchors,
 )
 
 PROJECT_ROOT = str(manager.PROJECT_ROOT)
 WORKSPACE_ROOT = str(manager.WORKSPACE_ROOT)
+BRIEFING_DIR = str(manager.BRIEFING_DIR)
 
 
 def test_finds_python_process_started_from_project_path():
@@ -132,7 +134,7 @@ def test_finds_daily_briefing_process_started_from_workspace_path():
             parent_pid=1,
             name="pythonw.exe",
             executable_path=r"C:\Python310\pythonw.exe",
-            command_line=rf'pythonw "{WORKSPACE_ROOT}\daily_briefing\run_briefing.py" --mode monitor',
+            command_line=rf'pythonw "{BRIEFING_DIR}\run_briefing.py" --mode monitor',
         ),
         ProcessRecord(
             pid=401,
@@ -195,7 +197,7 @@ def test_build_briefing_command_can_generate_preview_without_sending():
 
     assert command[0].endswith(("pythonw.exe", "python.exe", "py.exe"))
     assert command[-4:] == [
-        str(Path(WORKSPACE_ROOT) / "daily_briefing" / "run_briefing.py"),
+        str(Path(BRIEFING_DIR) / "run_briefing.py"),
         "--mode",
         "premarket",
         "--no-send",
@@ -206,7 +208,7 @@ def test_build_briefing_command_can_generate_and_send():
     command = build_briefing_command("close", send=True)
 
     assert command[-3:] == [
-        str(Path(WORKSPACE_ROOT) / "daily_briefing" / "run_briefing.py"),
+        str(Path(BRIEFING_DIR) / "run_briefing.py"),
         "--mode",
         "close",
     ]
@@ -281,11 +283,39 @@ def test_resolve_project_root_when_exe_is_in_dist_folder(tmp_path):
     assert resolve_project_root_from_anchors([dist]) == project
 
 
+def test_resolve_project_root_when_repo_contains_briefing_dir(tmp_path):
+    project = tmp_path / "AAAA-felix-gupiao"
+    (project / "tools").mkdir(parents=True)
+    (project / "daily_briefing").mkdir()
+
+    assert resolve_project_root_from_anchors([project]) == project
+
+
 def test_resolve_project_root_from_clean_portable_folder(tmp_path):
     workspace = tmp_path / "AStockBriefingManager"
     (workspace / "daily_briefing").mkdir(parents=True)
 
     assert resolve_project_root_from_anchors([workspace]) == workspace / "TradingAgents"
+
+
+def test_resolve_briefing_dir_prefers_sibling_layout(tmp_path, monkeypatch):
+    monkeypatch.delenv("A_STOCK_BRIEFING_DIR", raising=False)
+    workspace = tmp_path / "AStock"
+    project = workspace / "TradingAgents"
+    briefing = workspace / "daily_briefing"
+    project.mkdir(parents=True)
+    briefing.mkdir()
+
+    assert resolve_briefing_dir(project) == briefing
+
+
+def test_resolve_briefing_dir_supports_repo_local_layout(tmp_path, monkeypatch):
+    monkeypatch.delenv("A_STOCK_BRIEFING_DIR", raising=False)
+    project = tmp_path / "AAAA-felix-gupiao"
+    briefing = project / "daily_briefing"
+    briefing.mkdir(parents=True)
+
+    assert resolve_briefing_dir(project) == briefing
 
 
 def test_api_settings_form_values_are_normalized():

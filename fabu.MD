@@ -77,7 +77,7 @@ git config user.email
 Select-String -Path tools\tradingagents_service_manager.py -Pattern 'APP_VERSION'
 ```
 
-发布 tag 必须使用 `vAPP_VERSION`，例如 `APP_VERSION = "0.2.0"` 对应 GitHub Release tag `v0.2.0`。
+发布 tag 必须使用 `vAPP_VERSION`，例如 `APP_VERSION = "0.2.1"` 对应 GitHub Release tag `v0.2.1`。
 
 注意：`pyproject.toml` 是原 TradingAgents Python 包版本，不一定等于当前 Windows 管理器版本。发布 Windows 管理器时，以 `APP_VERSION` 为准。
 
@@ -169,15 +169,15 @@ git push --force
 
 ## 12. 创建 GitHub Release
 
-tag 格式固定为 `vAPP_VERSION`，例如 `v0.2.0`。
+tag 格式固定为 `vAPP_VERSION`，例如 `v0.2.1`。
 
 如果 Release 不存在：
 
 ```powershell
-gh release create v0.2.0 `
+gh release create v0.2.1 `
   --repo felix1709/AAAA-felix-gupiao `
   --target main `
-  --title "AStock Briefing Manager v0.2.0" `
+  --title "AStock Briefing Manager v0.2.1" `
   --notes "本版本包含 AStock Briefing Manager Windows 可视化管理器、定时服务控制、设置页、更新检测和干净可分发包。" `
   'C:\Users\admin\Documents\ChatGPT\A沪深\release\AStockBriefingManager-clean.zip'
 ```
@@ -189,7 +189,7 @@ gh release create v0.2.0 `
 发布后检查：
 
 ```powershell
-gh release view v0.2.0 --repo felix1709/AAAA-felix-gupiao
+gh release view v0.2.1 --repo felix1709/AAAA-felix-gupiao
 ```
 
 必须确认：

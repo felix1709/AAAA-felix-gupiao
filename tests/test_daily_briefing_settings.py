@@ -1,11 +1,19 @@
 from __future__ import annotations
 
 import json
+import os
 import sys
 from pathlib import Path
 
-WORKSPACE_ROOT = Path(__file__).resolve().parents[2]
-BRIEFING_DIR = WORKSPACE_ROOT / "daily_briefing"
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+SIBLING_BRIEFING_DIR = PROJECT_ROOT.parent / "daily_briefing"
+BRIEFING_DIR = (
+    Path(os.environ["A_STOCK_BRIEFING_DIR"])
+    if os.environ.get("A_STOCK_BRIEFING_DIR")
+    else SIBLING_BRIEFING_DIR
+    if SIBLING_BRIEFING_DIR.exists()
+    else PROJECT_ROOT / "daily_briefing"
+)
 sys.path.insert(0, str(BRIEFING_DIR))
 
 import data_fetch  # noqa: E402

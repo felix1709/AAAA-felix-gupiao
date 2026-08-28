@@ -28,6 +28,8 @@ def resolve_project_root_from_anchors(anchors: Iterable[Path]) -> Path | None:
                 and (candidate.parent / "daily_briefing").exists()
             ):
                 return candidate
+            if (candidate / "tools").exists() and (candidate / "daily_briefing").exists():
+                return candidate
             project_dir = candidate / "TradingAgents"
             if project_dir.exists() and (candidate / "daily_briefing").exists():
                 return project_dir
@@ -45,9 +47,25 @@ def resolve_project_root() -> Path:
     return resolve_project_root_from_anchors(anchors) or Path(__file__).resolve().parents[1]
 
 
+def resolve_briefing_dir(project_root: Path) -> Path:
+    configured = os.getenv("A_STOCK_BRIEFING_DIR")
+    if configured:
+        return Path(configured).resolve()
+
+    sibling = project_root.parent / "daily_briefing"
+    if sibling.exists():
+        return sibling
+
+    in_repo = project_root / "daily_briefing"
+    if in_repo.exists():
+        return in_repo
+
+    return sibling
+
+
 PROJECT_ROOT = resolve_project_root()
-WORKSPACE_ROOT = PROJECT_ROOT.parent
-BRIEFING_DIR = WORKSPACE_ROOT / "daily_briefing"
+BRIEFING_DIR = resolve_briefing_dir(PROJECT_ROOT)
+WORKSPACE_ROOT = BRIEFING_DIR.parent
 BRIEFING_SCRIPT = BRIEFING_DIR / "run_briefing.py"
 SETUP_TASKS_SCRIPT = BRIEFING_DIR / "setup_tasks.ps1"
 MANAGER_SCRIPT_NAME = "tradingagents_service_manager.py"
@@ -55,7 +73,7 @@ LAUNCHER_SCRIPT_NAME = "start_service_manager.bat"
 PACKAGED_EXE_NAME = "astockbriefingmanager.exe"
 APP_TITLE = "A股每日简报服务管理器"
 APP_RUNNING_TITLE = f"{APP_TITLE} - 后台运行中"
-APP_VERSION = "0.2.0"
+APP_VERSION = "0.2.1"
 GITHUB_REPO_URL = "https://github.com/felix1709/AAAA-felix-gupiao"
 GITHUB_LATEST_RELEASE_API = (
     "https://api.github.com/repos/felix1709/AAAA-felix-gupiao/releases/latest"
@@ -248,15 +266,14 @@ def find_tradingagents_processes(
     processes: Iterable[ProcessRecord],
     *,
     project_root: str | Path = PROJECT_ROOT,
+    briefing_dir: str | Path = BRIEFING_DIR,
     excluded_pids: set[int] | None = None,
 ) -> list[ProcessRecord]:
     """Return running processes that clearly belong to this TradingAgents checkout."""
     excluded_pids = excluded_pids or set()
     project_path = Path(project_root)
     project_marker = _normalized_text(project_path)
-    briefing_marker = _normalized_text(
-        project_path.parent / "daily_briefing" / BRIEFING_SCRIPT_NAME
-    )
+    briefing_marker = _normalized_text(Path(briefing_dir) / BRIEFING_SCRIPT_NAME)
     matches = []
 
     for process in processes:

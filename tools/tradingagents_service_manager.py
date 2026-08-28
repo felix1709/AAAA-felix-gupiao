@@ -75,7 +75,7 @@ LAUNCHER_SCRIPT_NAME = "start_service_manager.bat"
 PACKAGED_EXE_NAME = "astockbriefingmanager.exe"
 APP_TITLE = "A股每日简报服务管理器"
 APP_RUNNING_TITLE = f"{APP_TITLE} - 后台运行中"
-APP_VERSION = "0.2.3"
+APP_VERSION = "0.2.4"
 GITHUB_REPO_URL = "https://github.com/felix1709/AAAA-felix-gupiao"
 GITHUB_LATEST_RELEASE_API = (
     "https://api.github.com/repos/felix1709/AAAA-felix-gupiao/releases/latest"
@@ -1032,6 +1032,15 @@ class ServiceManagerApp:
             ("hard_stop", "硬止损"),
         )
 
+    def _api_action_layout(self) -> dict[str, object]:
+        return {
+            "row": 0,
+            "column": 2,
+            "columnspan": 2,
+            "sticky": "e",
+            "pady": (0, 8),
+        }
+
     def _overview_card_grid_position(self, index: int) -> tuple[int, int]:
         return index // 2, index % 2
 
@@ -1882,14 +1891,43 @@ class ServiceManagerApp:
         api_panel.columnconfigure(1, weight=1)
         api_panel.columnconfigure(3, weight=1)
 
+        header_info = tk.Frame(api_panel, bg=tokens["card_bg"])
+        header_info.grid(row=0, column=0, columnspan=2, sticky="ew", pady=(0, 8))
         tk.Label(
-            api_panel,
+            header_info,
             text="OpenAI 兼容 API",
             bg=tokens["card_bg"],
             fg=tokens["accent"],
             font=("Segoe UI", 11, "bold"),
             anchor="w",
-        ).grid(row=0, column=0, columnspan=4, sticky="ew", pady=(0, 8))
+        ).pack(anchor="w")
+        tk.Label(
+            header_info,
+            textvariable=self.api_key_hint,
+            bg=tokens["card_bg"],
+            fg=tokens["muted"],
+            font=("Segoe UI", 9),
+            anchor="w",
+        ).pack(anchor="w", pady=(2, 0))
+
+        actions = tk.Frame(api_panel, bg=tokens["card_bg"])
+        actions.grid(**self._api_action_layout())
+        ttk.Button(
+            actions,
+            text="保存 API 设置",
+            style="Primary.TButton",
+            command=self.save_api_settings,
+        ).pack(side="left")
+        self.api_test_button = ttk.Button(actions, text="测试连接", command=self.test_api_connection)
+        self.api_test_button.pack(side="left", padx=(8, 0))
+        tk.Label(
+            actions,
+            textvariable=self.api_test_status,
+            bg=tokens["card_bg"],
+            fg=tokens["info"],
+            font=("Segoe UI", 9, "bold"),
+            anchor="w",
+        ).pack(side="left", padx=(10, 0))
 
         for row, key, label, show in (
             (1, "base_url", "Base URL", ""),
@@ -1921,34 +1959,6 @@ class ServiceManagerApp:
                     sticky="ew",
                     pady=4,
                 )
-
-        tk.Label(
-            api_panel,
-            textvariable=self.api_key_hint,
-            bg=tokens["card_bg"],
-            fg=tokens["muted"],
-            font=("Segoe UI", 9),
-            anchor="w",
-        ).grid(row=4, column=1, columnspan=3, sticky="w", pady=(2, 0))
-
-        actions = tk.Frame(api_panel, bg=tokens["card_bg"])
-        actions.grid(row=5, column=1, columnspan=3, sticky="w", pady=(10, 0))
-        ttk.Button(
-            actions,
-            text="保存 API 设置",
-            style="Primary.TButton",
-            command=self.save_api_settings,
-        ).pack(side="left")
-        self.api_test_button = ttk.Button(actions, text="测试连接", command=self.test_api_connection)
-        self.api_test_button.pack(side="left", padx=(8, 0))
-        tk.Label(
-            api_panel,
-            textvariable=self.api_test_status,
-            bg=tokens["card_bg"],
-            fg=tokens["info"],
-            font=("Segoe UI", 9, "bold"),
-            anchor="w",
-        ).grid(row=6, column=1, columnspan=3, sticky="w", pady=(8, 0))
 
         self._build_smtp_settings_panel(parent, 1)
 

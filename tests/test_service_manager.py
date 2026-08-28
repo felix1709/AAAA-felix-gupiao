@@ -483,6 +483,16 @@ def test_navigation_renames_api_to_settings_and_recipient_page_is_explicit():
     assert all(label != "邮箱" for _key, label in nav_items)
 
 
+def test_api_action_buttons_stay_in_header_row_to_avoid_clipping():
+    app = ServiceManagerApp.__new__(ServiceManagerApp)
+
+    layout = app._api_action_layout()
+
+    assert layout["row"] == 0
+    assert layout["column"] == 2
+    assert layout["columnspan"] == 2
+
+
 def test_checklist_routes_sender_to_settings_and_recipients_to_recipient_page():
     app = ServiceManagerApp.__new__(ServiceManagerApp)
 

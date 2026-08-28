@@ -195,7 +195,7 @@ def test_collect_process_tree_returns_descendants_before_parent():
 def test_build_briefing_command_can_generate_preview_without_sending():
     command = build_briefing_command("premarket", send=False)
 
-    assert command[0].endswith(("pythonw.exe", "python.exe", "py.exe"))
+    assert Path(command[0]).name in {"pythonw.exe", "python.exe", "py.exe", "python"}
     assert command[-4:] == [
         str(Path(BRIEFING_DIR) / "run_briefing.py"),
         "--mode",

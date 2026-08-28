@@ -31,6 +31,18 @@ MANIFEST
 #   before PyInstaller builds the exe, so as to inject date/other infos into it.
 *.manifest
 *.spec
+!AStockBriefingManager.spec
+
+# Local manager release artifacts and user data
+AStockBriefingManager.exe
+AStockBriefingManager*.zip
+release/
+../release/
+../AStockBriefingManager.exe
+../daily_briefing/data/service_settings.json
+../daily_briefing/data/monitor_state.json
+../daily_briefing/data/reports/
+../daily_briefing/logs/
 
 # Installer logs
 pip-log.txt

@@ -75,7 +75,7 @@ LAUNCHER_SCRIPT_NAME = "start_service_manager.bat"
 PACKAGED_EXE_NAME = "astockbriefingmanager.exe"
 APP_TITLE = "A股每日简报服务管理器"
 APP_RUNNING_TITLE = f"{APP_TITLE} - 后台运行中"
-APP_VERSION = "0.2.2"
+APP_VERSION = "0.2.3"
 GITHUB_REPO_URL = "https://github.com/felix1709/AAAA-felix-gupiao"
 GITHUB_LATEST_RELEASE_API = (
     "https://api.github.com/repos/felix1709/AAAA-felix-gupiao/releases/latest"
@@ -481,6 +481,42 @@ def start_update_installation(
 
 def _normalized_text(value: object) -> str:
     return str(value or "").replace("/", "\\").casefold()
+
+
+def tencent_quote_code_for_stock(value: str) -> str:
+    stock = settings_store.normalize_stock({"code": value})
+    prefix = {"SS": "sh", "SZ": "sz", "BJ": "bj"}[stock["suffix"]]
+    return f"{prefix}{stock['code']}"
+
+
+def lookup_stock_name(
+    value: str,
+    *,
+    request_get=requests.get,
+    timeout: int = 6,
+) -> str:
+    query_code = tencent_quote_code_for_stock(value)
+    try:
+        response = request_get(
+            "https://qt.gtimg.cn/q=" + query_code,
+            headers={"User-Agent": "Mozilla/5.0"},
+            timeout=timeout,
+        )
+        response.raise_for_status()
+    except requests.RequestException:
+        return ""
+
+    content = getattr(response, "content", b"")
+    raw = content.decode("gbk", "ignore") if content else str(getattr(response, "text", ""))
+
+    for line in raw.split(";"):
+        if "=" not in line:
+            continue
+        _var, value_text = line.split("=", 1)
+        fields = value_text.strip().strip('"').split("~")
+        if len(fields) >= 3 and fields[1].strip():
+            return fields[1].strip()
+    return ""
 
 
 def _process_haystack(process: ProcessRecord) -> str:
@@ -967,11 +1003,33 @@ class ServiceManagerApp:
         return (
             ("overview", "总览"),
             ("service", "服务状态"),
-            ("recipients", "邮箱"),
+            ("recipients", "添加收件人邮箱"),
             ("stocks", "股票"),
             ("schedule", "定时"),
             ("settings", "设置"),
             ("logs", "日志"),
+        )
+
+    def _checklist_config(self) -> tuple[tuple[str, str], ...]:
+        return (
+            ("API 已配置并测试通过", "settings"),
+            ("发件邮箱已配置", "settings"),
+            ("至少有一个收件人", "recipients"),
+            ("至少有一只关注股票", "stocks"),
+            ("定时服务已启用", "service"),
+        )
+
+    def _stock_form_fields(self) -> tuple[tuple[str, str], ...]:
+        return (
+            ("code", "代码"),
+            ("shares", "股数"),
+            ("cost", "成本"),
+            ("risk", "风险线"),
+            ("clear", "清仓线"),
+            ("reduce_low", "减仓下限"),
+            ("reduce_high", "减仓上限"),
+            ("risk2", "第二风险线"),
+            ("hard_stop", "硬止损"),
         )
 
     def _overview_card_grid_position(self, index: int) -> tuple[int, int]:
@@ -1302,10 +1360,10 @@ class ServiceManagerApp:
 
         overview_page = self._create_page("overview", "总览", "快速确认每日盘点服务是否可以正常工作。")
         service_page = self._create_page("service", "服务状态", "查看后台进程和 Windows 定时任务。")
-        recipients_page = self._create_page("recipients", "邮箱", "配置发件邮箱和收件人。")
+        recipients_page = self._create_page("recipients", "添加收件人邮箱", "维护每日简报发送到哪些邮箱。")
         stocks_page = self._create_page("stocks", "股票", "维护关注股票、持仓数量和风险线。")
         schedule_page = self._create_page("schedule", "定时", "查看发送时间，也可以手动生成或发送简报。")
-        settings_page = self._create_page("settings", "设置", "配置接口、模型，并检查/安装新版本。")
+        settings_page = self._create_page("settings", "设置", "配置接口、发件邮箱，并检查/安装新版本。")
         logs_page = self._create_page("logs", "日志", "查看本次窗口打开后的操作记录。")
 
         self._build_overview_tab(overview_page)
@@ -1481,13 +1539,7 @@ class ServiceManagerApp:
             font=("Segoe UI", 11, "bold"),
             anchor="w",
         ).pack(fill="x")
-        for label, page_key in (
-            ("API 已配置并测试通过", "settings"),
-            ("发件邮箱已配置", "recipients"),
-            ("至少有一个收件人", "recipients"),
-            ("至少有一只关注股票", "stocks"),
-            ("定时服务已启用", "service"),
-        ):
+        for label, page_key in self._checklist_config():
             row = tk.Frame(checklist, bg=checklist_bg)
             row.pack(fill="x", pady=(8, 0))
             state = tk.Label(
@@ -1624,36 +1676,7 @@ class ServiceManagerApp:
         parent.columnconfigure(0, weight=1)
         top = ttk.Frame(parent, style="Content.TFrame")
         top.pack(fill="x")
-        ttk.Label(top, text="发件邮箱 SMTP", style="Section.TLabel").pack(anchor="w")
-
-        smtp_form = ttk.Frame(parent, style="Content.TFrame")
-        smtp_form.pack(fill="x", pady=(8, 12))
-        smtp_form.columnconfigure(1, weight=1)
-        smtp_form.columnconfigure(3, weight=1)
-        smtp_fields = [
-            ("host", "SMTP 服务器"),
-            ("port", "端口"),
-            ("user", "发件邮箱"),
-            ("auth_code", "授权码"),
-        ]
-        for index, (key, label) in enumerate(smtp_fields):
-            row = index // 2
-            column = (index % 2) * 2
-            ttk.Label(smtp_form, text=label).grid(
-                row=row, column=column, sticky="w", padx=(0, 6), pady=4
-            )
-            show = "*" if key == "auth_code" else ""
-            ttk.Entry(smtp_form, textvariable=self.smtp_vars[key], show=show).grid(
-                row=row, column=column + 1, sticky="ew", padx=(0, 16), pady=4
-            )
-        ttk.Label(smtp_form, textvariable=self.smtp_key_hint, style="Muted.TLabel").grid(
-            row=2, column=1, sticky="w"
-        )
-        ttk.Button(smtp_form, text="保存发件邮箱设置", command=self.save_smtp_settings).grid(
-            row=2, column=3, sticky="w"
-        )
-
-        ttk.Label(top, text="收件邮箱", style="Section.TLabel").pack(anchor="w", pady=(8, 0))
+        ttk.Label(top, text="收件人邮箱", style="Section.TLabel").pack(anchor="w")
         ttk.Label(top, text="可添加多个收件人，发送时会发给这里列出的邮箱。", style="Muted.TLabel").pack(
             anchor="w",
             pady=(4, 10),
@@ -1669,7 +1692,7 @@ class ServiceManagerApp:
         ttk.Entry(input_row, textvariable=self.recipient_entry).pack(
             side="left", fill="x", expand=True
         )
-        ttk.Button(input_row, text="添加邮箱", command=self.add_recipient).pack(
+        ttk.Button(input_row, text="添加收件人邮箱", command=self.add_recipient).pack(
             side="left", padx=(8, 0)
         )
         ttk.Button(input_row, text="删除选中", command=self.remove_selected_recipients).pack(
@@ -1746,7 +1769,7 @@ class ServiceManagerApp:
                 stretch=key == "name",
                 anchor="center" if key != "name" else "w",
             )
-        self.stock_tree.bind("<<TreeviewSelect>>", self.on_stock_selected)
+        self.stock_tree.bind("<Double-1>", self.edit_selected_stock)
         stock_scroll = ttk.Scrollbar(tree_frame, orient="vertical", command=self.stock_tree.yview)
         self.stock_tree.configure(yscrollcommand=stock_scroll.set)
         self.stock_tree.grid(row=0, column=0, sticky="nsew")
@@ -1762,18 +1785,7 @@ class ServiceManagerApp:
         form.grid(row=3, column=0, sticky="ew")
         form.columnconfigure(1, weight=1)
         form.columnconfigure(3, weight=1)
-        fields = [
-            ("code", "代码"),
-            ("name", "名称"),
-            ("shares", "股数"),
-            ("cost", "成本"),
-            ("risk", "风险线"),
-            ("clear", "清仓线"),
-            ("reduce_low", "减仓下限"),
-            ("reduce_high", "减仓上限"),
-            ("risk2", "第二风险线"),
-            ("hard_stop", "硬止损"),
-        ]
+        fields = self._stock_form_fields()
         for index, (key, label) in enumerate(fields):
             row = index // 2
             column = (index % 2) * 2
@@ -1781,8 +1793,13 @@ class ServiceManagerApp:
             ttk.Entry(form, textvariable=self.stock_vars[key]).grid(
                 row=row, column=column + 1, sticky="ew", padx=(0, 16), pady=4
             )
+        ttk.Label(
+            form,
+            text="输入股票代码后保存，名称会自动检索；双击上方股票可载入持仓修改。",
+            style="Muted.TLabel",
+        ).grid(row=5, column=0, columnspan=4, sticky="w", pady=(6, 0))
         ttk.Checkbutton(form, text="启用监控", variable=self.stock_enabled).grid(
-            row=5, column=0, sticky="w", pady=(6, 0)
+            row=6, column=0, sticky="w", pady=(6, 0)
         )
 
         actions = ttk.Frame(parent, style="Content.TFrame")
@@ -1933,6 +1950,8 @@ class ServiceManagerApp:
             anchor="w",
         ).grid(row=6, column=1, columnspan=3, sticky="w", pady=(8, 0))
 
+        self._build_smtp_settings_panel(parent, 1)
+
         update_panel = tk.Frame(
             parent,
             bg=tokens["card_bg"],
@@ -1941,7 +1960,7 @@ class ServiceManagerApp:
             padx=14,
             pady=12,
         )
-        update_panel.grid(row=1, column=0, sticky="ew", pady=(12, 0))
+        update_panel.grid(row=2, column=0, sticky="ew", pady=(12, 0))
         update_panel.columnconfigure(0, weight=1)
 
         tk.Label(
@@ -1984,6 +2003,80 @@ class ServiceManagerApp:
             font=("Segoe UI", 9),
             anchor="w",
         ).pack(side="left", padx=(10, 0), fill="x", expand=True)
+
+    def _build_smtp_settings_panel(self, parent: ttk.Frame, row: int) -> None:
+        tokens = self._theme_tokens()
+        smtp_panel = tk.Frame(
+            parent,
+            bg=tokens["card_bg"],
+            highlightbackground=tokens["border"],
+            highlightthickness=1,
+            padx=14,
+            pady=12,
+        )
+        smtp_panel.grid(row=row, column=0, sticky="ew", pady=(12, 0))
+        smtp_panel.columnconfigure(1, weight=1)
+        smtp_panel.columnconfigure(3, weight=1)
+
+        tk.Label(
+            smtp_panel,
+            text="发件邮箱 SMTP",
+            bg=tokens["card_bg"],
+            fg=tokens["accent"],
+            font=("Segoe UI", 11, "bold"),
+            anchor="w",
+        ).grid(row=0, column=0, columnspan=4, sticky="ew")
+        tk.Label(
+            smtp_panel,
+            text="用于每日盘点邮件的发件账号；收件人请到“添加收件人邮箱”。",
+            bg=tokens["card_bg"],
+            fg=tokens["muted"],
+            font=("Segoe UI", 9),
+            anchor="w",
+        ).grid(row=1, column=0, columnspan=4, sticky="ew", pady=(6, 8))
+
+        for index, (key, label) in enumerate(
+            (
+                ("host", "SMTP 服务器"),
+                ("port", "端口"),
+                ("user", "发件邮箱"),
+                ("auth_code", "授权码"),
+            )
+        ):
+            field_row = 2 + index // 2
+            column = (index % 2) * 2
+            tk.Label(
+                smtp_panel,
+                text=label,
+                bg=tokens["card_bg"],
+                fg=tokens["muted"],
+                font=("Segoe UI", 10),
+                width=12,
+                anchor="w",
+            ).grid(row=field_row, column=column, sticky="w", padx=(0, 8), pady=4)
+            show = "*" if key == "auth_code" else ""
+            ttk.Entry(smtp_panel, textvariable=self.smtp_vars[key], show=show).grid(
+                row=field_row,
+                column=column + 1,
+                sticky="ew",
+                padx=(0, 16),
+                pady=4,
+            )
+
+        tk.Label(
+            smtp_panel,
+            textvariable=self.smtp_key_hint,
+            bg=tokens["card_bg"],
+            fg=tokens["muted"],
+            font=("Segoe UI", 9),
+            anchor="w",
+        ).grid(row=4, column=1, sticky="w", pady=(8, 0))
+        ttk.Button(
+            smtp_panel,
+            text="保存发件邮箱设置",
+            style="Primary.TButton",
+            command=self.save_smtp_settings,
+        ).grid(row=4, column=3, sticky="w", pady=(8, 0))
 
     def _build_logs_tab(self, parent: ttk.Frame) -> None:
         parent.columnconfigure(0, weight=1)
@@ -2223,7 +2316,17 @@ class ServiceManagerApp:
     def _stock_from_form(self) -> dict:
         raw = {key: var.get().strip() for key, var in self.stock_vars.items()}
         raw["enabled"] = self.stock_enabled.get()
-        return settings_store.normalize_stock(raw)
+        raw["name"] = ""
+        stock = settings_store.normalize_stock(raw)
+        resolved_name = lookup_stock_name(stock["full_code"])
+        if not resolved_name:
+            for existing in self.settings.get("stocks", []):
+                if existing.get("full_code") == stock["full_code"]:
+                    resolved_name = str(existing.get("name") or "").strip()
+                    break
+        if resolved_name:
+            stock["name"] = resolved_name
+        return stock
 
     def clear_stock_form(self) -> None:
         for var in self.stock_vars.values():
@@ -2232,7 +2335,7 @@ class ServiceManagerApp:
         for item in self.stock_tree.selection():
             self.stock_tree.selection_remove(item)
 
-    def on_stock_selected(self, _event=None) -> None:
+    def edit_selected_stock(self, _event=None) -> None:
         selected = self.stock_tree.selection()
         if not selected:
             return
@@ -2246,6 +2349,9 @@ class ServiceManagerApp:
             self.stock_vars["code"].set(stock.get("full_code", stock.get("code", "")))
             self.stock_enabled.set(bool(stock.get("enabled", True)))
             break
+
+    def on_stock_selected(self, _event=None) -> None:
+        self.edit_selected_stock(_event)
 
     def add_or_update_stock(self) -> None:
         try:

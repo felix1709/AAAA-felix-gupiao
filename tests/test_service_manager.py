@@ -367,6 +367,57 @@ def test_smtp_settings_form_values_are_normalized():
     }
 
 
+def test_lookup_stock_name_reads_tencent_quote_response():
+    class FakeResponse:
+        content = 'v_sh600000="51~浦发银行~600000~9.40";'.encode("gbk")
+
+        def raise_for_status(self):
+            return None
+
+    calls = []
+
+    def fake_get(url, **kwargs):
+        calls.append((url, kwargs))
+        return FakeResponse()
+
+    assert manager.lookup_stock_name("600000", request_get=fake_get) == "浦发银行"
+    assert calls[0][0].endswith("q=sh600000")
+    assert calls[0][1]["timeout"] == 6
+
+
+def test_stock_form_resolves_name_from_code(monkeypatch):
+    class FakeVar:
+        def __init__(self, value):
+            self.value = value
+
+        def get(self):
+            return self.value
+
+    app = ServiceManagerApp.__new__(ServiceManagerApp)
+    app.stock_vars = {
+        "code": FakeVar("600000"),
+        "name": FakeVar(""),
+        "shares": FakeVar("100"),
+        "cost": FakeVar("9.12"),
+        "risk": FakeVar(""),
+        "risk2": FakeVar(""),
+        "clear": FakeVar(""),
+        "hard_stop": FakeVar(""),
+        "reduce_low": FakeVar(""),
+        "reduce_high": FakeVar(""),
+    }
+    app.stock_enabled = FakeVar(True)
+    app.settings = {"stocks": []}
+    monkeypatch.setattr(manager, "lookup_stock_name", lambda code: "浦发银行")
+
+    stock = app._stock_from_form()
+
+    assert stock["full_code"] == "600000.SS"
+    assert stock["name"] == "浦发银行"
+    assert stock["shares"] == 100
+    assert stock["cost"] == 9.12
+
+
 def test_api_connection_success_updates_model_options():
     class FakeVar:
         def __init__(self):
@@ -421,13 +472,95 @@ def test_theme_tokens_use_banana_dark_console_palette():
     assert tokens["success"] == "#2ee59d"
 
 
-def test_navigation_renames_api_to_settings():
+def test_navigation_renames_api_to_settings_and_recipient_page_is_explicit():
     app = ServiceManagerApp.__new__(ServiceManagerApp)
 
     nav_items = app._nav_items()
 
     assert ("settings", "设置") in nav_items
+    assert ("recipients", "添加收件人邮箱") in nav_items
     assert all(label != "API" for _key, label in nav_items)
+    assert all(label != "邮箱" for _key, label in nav_items)
+
+
+def test_checklist_routes_sender_to_settings_and_recipients_to_recipient_page():
+    app = ServiceManagerApp.__new__(ServiceManagerApp)
+
+    checklist = dict(app._checklist_config())
+
+    assert checklist["发件邮箱已配置"] == "settings"
+    assert checklist["至少有一个收件人"] == "recipients"
+
+
+def test_stock_form_fields_exclude_manual_name_input():
+    app = ServiceManagerApp.__new__(ServiceManagerApp)
+
+    fields = app._stock_form_fields()
+
+    assert ("name", "名称") not in fields
+    assert fields[0] == ("code", "代码")
+
+
+def test_edit_selected_stock_loads_holding_values_into_form():
+    class FakeVar:
+        def __init__(self, value=""):
+            self.value = value
+
+        def get(self):
+            return self.value
+
+        def set(self, value):
+            self.value = value
+
+    class FakeTree:
+        def selection(self):
+            return ["600000.SS"]
+
+    app = ServiceManagerApp.__new__(ServiceManagerApp)
+    app.stock_tree = FakeTree()
+    app.settings = {
+        "stocks": [
+            {
+                "code": "600000",
+                "suffix": "SS",
+                "full_code": "600000.SS",
+                "name": "浦发银行",
+                "shares": 300,
+                "cost": 9.12,
+                "risk": 8.5,
+                "risk2": None,
+                "clear": 7.9,
+                "hard_stop": None,
+                "reduce_low": 10.0,
+                "reduce_high": 10.5,
+                "enabled": True,
+            }
+        ]
+    }
+    app.stock_vars = {
+        key: FakeVar()
+        for key in (
+            "code",
+            "name",
+            "shares",
+            "cost",
+            "risk",
+            "risk2",
+            "clear",
+            "hard_stop",
+            "reduce_low",
+            "reduce_high",
+        )
+    }
+    app.stock_enabled = FakeVar(False)
+
+    app.edit_selected_stock()
+
+    assert app.stock_vars["code"].value == "600000.SS"
+    assert app.stock_vars["name"].value == "浦发银行"
+    assert app.stock_vars["shares"].value == "300"
+    assert app.stock_vars["cost"].value == "9.12"
+    assert app.stock_enabled.value is True
 
 
 def test_overview_card_grid_uses_two_columns_to_avoid_overlap():

@@ -87,12 +87,13 @@ First use:
 1. Double-click AStockBriefingManager.exe, or StartManager.bat.
 2. Open Settings, fill your OpenAI-compatible Base URL and API Key, then test connection.
 3. Choose a model from the model dropdown after connection succeeds.
-4. Open recipients/email settings, fill SMTP sender settings and recipient addresses.
-5. Open stocks, add your own stocks or holdings.
-6. Use Schedule to manually preview/send reports.
-7. Use Settings to check whether a newer release is available.
-8. If Settings shows a newer release, click Download and Install to update this app automatically.
-9. Use Service Status to install or enable scheduled tasks.
+4. Open Settings, fill SMTP sender settings.
+5. Open Add Recipient Emails, add recipient addresses.
+6. Open stocks, add your own stocks or holdings.
+7. Use Schedule to manually preview/send reports.
+8. Use Settings to check whether a newer release is available.
+9. If Settings shows a newer release, click Download and Install to update this app automatically.
+10. Use Service Status to install or enable scheduled tasks.
 
 Notes:
 - This package includes the Python runtime inside the EXE. Codex is not required.

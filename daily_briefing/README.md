@@ -84,7 +84,7 @@ python daily_briefing\run_briefing.py --mode monitor --no-send
 优先双击 EXE 打开：
 
 ```powershell
-C:\Users\admin\Documents\ChatGPT\A沪深\AStockBriefingManager.exe
+C:\Users\admin\Documents\ChatGPT\A沪深\AAA.exe
 ```
 
 如果需要用源码调试，再双击：

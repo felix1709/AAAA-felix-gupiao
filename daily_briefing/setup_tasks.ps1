@@ -4,11 +4,14 @@
 )
 
 # 注册 A 股每日简报的 Windows 定时任务（当前用户，无需管理员）。
-# 优先使用同目录的 AStockBriefingManager.exe；没有 EXE 时回退到本机 Python。
+# 优先使用同目录的 AAA.exe（兼容旧名 AStockBriefingManager.exe）；没有 EXE 时回退到本机 Python。
 $ErrorActionPreference = "Stop"
 
 $Script = Join-Path $Root "daily_briefing\run_briefing.py"
-$Exe = Join-Path $Root "AStockBriefingManager.exe"
+$Exe = Join-Path $Root "AAA.exe"
+if (-not (Test-Path $Exe)) {
+    $Exe = Join-Path $Root "AStockBriefingManager.exe"
+}
 
 if ([string]::IsNullOrWhiteSpace($Runner)) {
     if (Test-Path $Exe) {
@@ -22,7 +25,7 @@ if ([string]::IsNullOrWhiteSpace($Runner)) {
 }
 
 if ([string]::IsNullOrWhiteSpace($Runner)) {
-    throw "没有找到 AStockBriefingManager.exe 或 python.exe，无法注册定时任务。"
+    throw "没有找到 AAA.exe 或 python.exe，无法注册定时任务。"
 }
 
 function New-BriefingTask {
@@ -32,7 +35,7 @@ function New-BriefingTask {
         [object[]]$Triggers,
         [string]$Description
     )
-    if ((Split-Path -Leaf $Runner).ToLowerInvariant() -eq "astockbriefingmanager.exe") {
+    if ((Split-Path -Leaf $Runner).ToLowerInvariant() -in @("aaa.exe", "astockbriefingmanager.exe")) {
         $Argument = "--run-briefing --mode " + $Mode
     } else {
         $Argument = '"' + $Script + '" --mode ' + $Mode

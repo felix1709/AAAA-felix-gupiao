@@ -23,7 +23,7 @@ Do not commit these items:
 - `build/`
 - `dist/`
 - `release/`
-- `AStockBriefingManager.exe`
+- `AAA.exe`
 - `daily_briefing/data/service_settings.json`
 - `daily_briefing/data/reports/`
 - `daily_briefing/logs/`
@@ -57,7 +57,7 @@ Do not commit these items:
 6. Smoke test the release EXE:
 
 ```powershell
-& 'C:\Users\admin\Documents\ChatGPT\A沪深\release\AStockBriefingManager-clean\AStockBriefingManager.exe' --once
+& 'C:\Users\admin\Documents\ChatGPT\A沪深\release\AStockBriefingManager-clean\AAA.exe' --once
 ```
 
 7. Review the Git diff and staged files. Confirm no private data is staged.
@@ -69,7 +69,7 @@ Do not commit these items:
 
 The clean release package must contain:
 
-- `AStockBriefingManager.exe`
+- `AAA.exe`
 - `StartManager.bat`
 - `InstallScheduledTasks.bat`
 - `README_FIRST_USE.txt`

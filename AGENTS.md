@@ -53,4 +53,4 @@ These files belong to the local user and must not be committed or published:
 - `dist/`
 - `build/`
 - `release/`
-- `AStockBriefingManager.exe`
+- `AAA.exe`

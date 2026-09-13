@@ -45,7 +45,7 @@ gh auth status -h github.com
 - `build/`
 - `dist/`
 - `release/`
-- `AStockBriefingManager.exe`
+- `AAA.exe`
 - `daily_briefing\data\service_settings.json`
 - `daily_briefing\data\monitor_state.json`
 - `daily_briefing\data\reports\`
@@ -104,7 +104,7 @@ Select-String -Path tools\tradingagents_service_manager.py -Pattern 'APP_VERSION
 构建后确认：
 
 ```powershell
-Test-Path 'C:\Users\admin\Documents\ChatGPT\A沪深\AStockBriefingManager.exe'
+Test-Path 'C:\Users\admin\Documents\ChatGPT\A沪深\AAA.exe'
 ```
 
 ## 8. 生成干净发布包
@@ -127,7 +127,7 @@ Get-ChildItem 'C:\Users\admin\Documents\ChatGPT\A沪深\release\AStockBriefingMa
 冒烟测试是最小启动检查，用来确认 EXE 能打开自身逻辑，不依赖 Codex：
 
 ```powershell
-& 'C:\Users\admin\Documents\ChatGPT\A沪深\release\AStockBriefingManager-clean\AStockBriefingManager.exe' --once
+& 'C:\Users\admin\Documents\ChatGPT\A沪深\release\AStockBriefingManager-clean\AAA.exe' --once
 ```
 
 如果失败，停止发布并先修复。

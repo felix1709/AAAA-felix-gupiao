@@ -233,7 +233,16 @@ class TestBaseClassIsolation:
     def test_normalized_does_not_propagate_reasoning_content(self):
         """The general-purpose NormalizedChatOpenAI must not carry
         DeepSeek-specific behaviour. Only the subclass does."""
-        assert not hasattr(NormalizedChatOpenAI, "_get_request_payload") or (
-            NormalizedChatOpenAI._get_request_payload
-            is NormalizedChatOpenAI.__bases__[0]._get_request_payload
+        client = NormalizedChatOpenAI(model="gpt-4.1", api_key="placeholder")
+        payload = client._get_request_payload(
+            [
+                AIMessage(
+                    content="Plan",
+                    additional_kwargs={"reasoning_content": "weighed bull case"},
+                ),
+                HumanMessage(content="Refine."),
+            ]
         )
+
+        assistant_dicts = [m for m in payload["messages"] if m.get("role") == "assistant"]
+        assert "reasoning_content" not in assistant_dicts[0]

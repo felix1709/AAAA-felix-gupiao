@@ -5,6 +5,7 @@
   python daily_briefing/run_briefing.py --mode midday
   python daily_briefing/run_briefing.py --mode close
   python daily_briefing/run_briefing.py --mode monitor
+  python daily_briefing/run_briefing.py --mode github
 
 可选参数：
   --date 2026-08-25   指定日期（默认今天）
@@ -22,6 +23,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import config
 import data_fetch
+import github_trending
 import report_builder
 
 LOG_FILE = config.LOG_DIR / "briefing.log"
@@ -47,13 +49,13 @@ def _save_report(mode: str, html: str, date: str, extra: str = "") -> Path:
     return path
 
 
-def _send_or_skip(subject: str, html: str, send: bool) -> bool:
+def _send_or_skip(subject: str, html: str, send: bool, from_name: str = "A股每日简报") -> bool:
     if not send:
         logging.info("邮件发送已跳过（--no-send）。")
         return False
     try:
         import mailer
-        ok = mailer.send_html(subject, html)
+        ok = mailer.send_html(subject, html, from_name=from_name)
         logging.info("邮件已发送：%s", subject)
         return ok
     except Exception as exc:
@@ -68,6 +70,15 @@ def run_report(mode: str, date: str, send: bool) -> None:
     path = _save_report(mode, html, date)
     logging.info("HTML 已保存：%s", path)
     _send_or_skip(subject, html, send)
+
+
+def run_github_report(date: str, send: bool) -> None:
+    """GitHub Trending 每日推送，不依赖 A 股交易日。"""
+    logging.info("开始生成 GitHub Trending 每日推送，日期=%s", date)
+    subject, html = github_trending.build_report()
+    path = _save_report("github", html, date)
+    logging.info("HTML 已保存：%s", path)
+    _send_or_skip(subject, html, send, from_name="GitHub 每日推送")
 
 
 def _load_state() -> dict:
@@ -131,7 +142,7 @@ def run_monitor(date: str, send: bool) -> None:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="A股每日简报")
-    parser.add_argument("--mode", choices=["premarket", "midday", "close", "monitor"], required=True)
+    parser.add_argument("--mode", choices=["premarket", "midday", "close", "monitor", "github"], required=True)
     parser.add_argument("--date", default=datetime.now().strftime("%Y-%m-%d"), help="YYYY-MM-DD")
     parser.add_argument("--no-send", action="store_true", help="只生成 HTML，不发送邮件")
     parser.add_argument("--force", action="store_true", help="非交易日也执行")
@@ -143,6 +154,8 @@ def main(argv: list[str] | None = None) -> int:
     try:
         if args.mode == "monitor":
             run_monitor(args.date, send)
+        elif args.mode == "github":
+            run_github_report(args.date, send)
         else:
             if not args.force and not data_fetch.is_trading_day(args.date):
                 logging.info("%s 不是A股交易日，跳过。", args.date)

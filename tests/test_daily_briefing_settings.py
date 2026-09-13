@@ -17,6 +17,7 @@ BRIEFING_DIR = (
 sys.path.insert(0, str(BRIEFING_DIR))
 
 import data_fetch  # noqa: E402
+import github_trending  # noqa: E402
 import llm_api  # noqa: E402
 import mailer  # noqa: E402
 import report_builder  # noqa: E402
@@ -550,3 +551,109 @@ def test_monitor_preview_does_not_consume_alert_quota(tmp_path, monkeypatch):
     state = json.loads(state_path.read_text(encoding="utf-8")) if state_path.exists() else {}
     assert state == {}
     assert sends == [False]
+
+TRENDING_FIXTURE = """
+<article class="Box-row">
+  <h2 class="h3 lh-condensed">
+    <a href="/owner/low-star" data-view-component="true" class="Link">
+      owner / low-star
+    </a>
+  </h2>
+  <p class="col-9 color-fg-muted my-1 tmp-pr-4">An agent framework for <em>fast</em> prototyping.</p>
+  <span itemprop="programmingLanguage">Python</span>
+  <a href="/owner/low-star/stargazers"><svg class="octicon"></svg> 12,345</a>
+  <a href="/owner/low-star/forks"><svg class="octicon"></svg> 678</a>
+  <span class="d-inline-block float-sm-right">50 stars today</span>
+</article>
+<article class="Box-row">
+  <h2 class="h3 lh-condensed">
+    <a href="/owner/hot-repo" data-view-component="true" class="Link">
+      owner / hot-repo
+    </a>
+  </h2>
+  <p class="col-9 color-fg-muted my-1 tmp-pr-4">Browser based satellite simulator with real data.</p>
+  <span itemprop="programmingLanguage">TypeScript</span>
+  <a href="/owner/hot-repo/stargazers"><svg class="octicon"></svg> 1,234</a>
+  <a href="/owner/hot-repo/forks"><svg class="octicon"></svg> 56</a>
+  <span class="d-inline-block float-sm-right">2,265 stars today</span>
+</article>
+<article class="Box-row">
+  <div class="f6 color-fg-muted mt-2">no repository link in this block</div>
+</article>
+"""
+
+
+def test_parse_trending_sorts_by_stars_today_and_skips_broken_blocks():
+    projects = github_trending.parse_trending(TRENDING_FIXTURE)
+
+    assert [item["full_name"] for item in projects] == ["owner/hot-repo", "owner/low-star"]
+
+    top = projects[0]
+    assert top["url"] == "https://github.com/owner/hot-repo"
+    assert top["description"] == "Browser based satellite simulator with real data."
+    assert top["language"] == "TypeScript"
+    assert top["stars_today"] == 2265
+    assert top["stars_total"] == 1234
+    assert top["forks_total"] == 56
+
+    assert projects[1]["stars_today"] == 50
+    assert projects[1]["description"] == "An agent framework for fast prototyping."
+
+
+def test_parse_trending_returns_empty_list_on_unknown_layout():
+    assert github_trending.parse_trending("<html><body>nothing here</body></html>") == []
+
+
+def test_build_report_uses_ai_analysis_and_falls_back_when_llm_unavailable(monkeypatch):
+    projects = github_trending.parse_trending(TRENDING_FIXTURE)
+    analysis = {
+        "problem": "演示用问题",
+        "users": "演示用户",
+        "business_model": "开源+托管订阅",
+        "potential": "潜力中等",
+        "risk": "合规风险",
+    }
+
+    class FakeResponse:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {
+                "choices": [
+                    {
+                        "message": {
+                            "content": json.dumps({"owner/hot-repo": analysis}, ensure_ascii=False)
+                        }
+                    }
+                ]
+            }
+
+    def fake_post(url, *, headers, json, timeout):
+        return FakeResponse()
+
+    monkeypatch.setattr(report_builder.config, "LLM_BASE_URL", "https://api.example.com/v1")
+    monkeypatch.setattr(report_builder.config, "LLM_API_KEY", "sk-test-key")
+    monkeypatch.setattr(report_builder.config, "LLM_MODEL", "gpt-test")
+    monkeypatch.setattr(report_builder.requests, "post", fake_post)
+
+    subject, html = github_trending.build_report(projects)
+
+    assert "GitHub Trending" in subject
+    assert "演示用问题" in html
+    assert github_trending.DISCLAIMER in html
+    assert "不构成投资建议" not in html
+
+    _, fallback_html = github_trending.build_report(projects, llm=lambda *args, **kwargs: None)
+
+    assert "AI 分析暂不可用" in fallback_html
+
+
+def test_github_entry_is_scheduled_at_10am():
+    entry = next(
+        (item for item in settings_store.DEFAULT_EMAIL_SCHEDULE if item["mode"] == "github"), None
+    )
+
+    assert entry is not None
+    assert entry["time"] == "10:00"
+    assert entry["task_name"] == "GitHub每日推送"

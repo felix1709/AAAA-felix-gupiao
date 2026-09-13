@@ -162,16 +162,16 @@ def test_finds_packaged_briefing_process_started_from_clean_folder():
         ProcessRecord(
             pid=410,
             parent_pid=1,
-            name="AStockBriefingManager.exe",
-            executable_path=rf"{WORKSPACE_ROOT}\AStockBriefingManager.exe",
-            command_line=rf'"{WORKSPACE_ROOT}\AStockBriefingManager.exe" --run-briefing --mode monitor',
+            name="AAA.exe",
+            executable_path=rf"{WORKSPACE_ROOT}\AAA.exe",
+            command_line=rf'"{WORKSPACE_ROOT}\AAA.exe" --run-briefing --mode monitor',
         ),
         ProcessRecord(
             pid=411,
             parent_pid=1,
-            name="AStockBriefingManager.exe",
-            executable_path=rf"{WORKSPACE_ROOT}\AStockBriefingManager.exe",
-            command_line=rf'"{WORKSPACE_ROOT}\AStockBriefingManager.exe"',
+            name="AAA.exe",
+            executable_path=rf"{WORKSPACE_ROOT}\AAA.exe",
+            command_line=rf'"{WORKSPACE_ROOT}\AAA.exe"',
         ),
     ]
 
@@ -219,12 +219,12 @@ def test_build_briefing_command_can_generate_and_send():
 
 def test_build_briefing_command_uses_packaged_exe_when_frozen(monkeypatch):
     monkeypatch.setattr(manager.sys, "frozen", True, raising=False)
-    monkeypatch.setattr(manager.sys, "executable", rf"{WORKSPACE_ROOT}\AStockBriefingManager.exe")
+    monkeypatch.setattr(manager.sys, "executable", rf"{WORKSPACE_ROOT}\AAA.exe")
 
     command = build_briefing_command("midday", send=False)
 
     assert command == [
-        rf"{WORKSPACE_ROOT}\AStockBriefingManager.exe",
+        rf"{WORKSPACE_ROOT}\AAA.exe",
         "--run-briefing",
         "--mode",
         "midday",
@@ -234,11 +234,11 @@ def test_build_briefing_command_uses_packaged_exe_when_frozen(monkeypatch):
 
 def test_scheduled_task_action_uses_packaged_exe_when_frozen(monkeypatch):
     monkeypatch.setattr(manager.sys, "frozen", True, raising=False)
-    monkeypatch.setattr(manager.sys, "executable", rf"{WORKSPACE_ROOT}\AStockBriefingManager.exe")
+    monkeypatch.setattr(manager.sys, "executable", rf"{WORKSPACE_ROOT}\AAA.exe")
 
     action = build_briefing_task_action("close")
 
-    assert action.execute == rf"{WORKSPACE_ROOT}\AStockBriefingManager.exe"
+    assert action.execute == rf"{WORKSPACE_ROOT}\AAA.exe"
     assert action.arguments == "--run-briefing --mode close"
     assert action.working_directory == WORKSPACE_ROOT
 
@@ -457,8 +457,44 @@ def test_api_connection_success_updates_model_options():
 def test_taskbar_title_shows_background_running_state():
     app = ServiceManagerApp.__new__(ServiceManagerApp)
 
-    assert app._taskbar_title_for_status("运行中: 2") == "A股每日简报服务管理器 - 后台运行中"
-    assert app._taskbar_title_for_status("定时已启用") == "A股每日简报服务管理器"
+    assert app._taskbar_title_for_status("运行中: 2") == "AAA - 后台运行中"
+    assert app._taskbar_title_for_status("定时已启用") == "AAA"
+
+
+def test_window_icon_path_points_to_red_bull_asset():
+    app = ServiceManagerApp.__new__(ServiceManagerApp)
+
+    icon_path = app._window_icon_path()
+
+    assert icon_path.name == "red_bull.png"
+    assert icon_path.exists()
+
+
+def test_tray_preference_is_persisted():
+    class FakeVar:
+        def __init__(self, value=False):
+            self.value = value
+
+        def get(self):
+            return self.value
+
+        def set(self, value):
+            self.value = value
+
+    app = ServiceManagerApp.__new__(ServiceManagerApp)
+    app.minimize_to_tray = FakeVar(False)
+    app.settings = {}
+    saved_values = []
+    app.save_current_settings = lambda silent=False: saved_values.append(
+        app.minimize_to_tray.get()
+    )
+    app._sync_tray_mode = lambda: None
+
+    app.minimize_to_tray.set(True)
+    app._save_tray_preference()
+
+    assert app.settings["minimize_to_tray"] is True
+    assert saved_values == [True]
 
 
 def test_theme_tokens_use_banana_dark_console_palette():
@@ -478,9 +514,10 @@ def test_navigation_renames_api_to_settings_and_recipient_page_is_explicit():
     nav_items = app._nav_items()
 
     assert ("settings", "设置") in nav_items
-    assert ("recipients", "添加收件人邮箱") in nav_items
+    assert ("recipients", "邮箱") in nav_items
+    assert ("service", "服务") in nav_items
     assert all(label != "API" for _key, label in nav_items)
-    assert all(label != "邮箱" for _key, label in nav_items)
+    assert all(label != "添加收件人邮箱" for _key, label in nav_items)
 
 
 def test_api_action_buttons_stay_in_header_row_to_avoid_clipping():
@@ -500,6 +537,20 @@ def test_checklist_routes_sender_to_settings_and_recipients_to_recipient_page():
 
     assert checklist["发件邮箱已配置"] == "settings"
     assert checklist["至少有一个收件人"] == "recipients"
+
+
+def test_checklist_button_labels_match_their_routes():
+    app = ServiceManagerApp.__new__(ServiceManagerApp)
+
+    labels = {
+        item: app._checklist_button_label(page_key)
+        for item, page_key in app._checklist_config()
+    }
+
+    assert labels["发件邮箱已配置"] == "去设置"
+    assert labels["至少有一个收件人"] == "去邮箱"
+    assert labels["至少有一只关注股票"] == "去股票"
+    assert labels["定时服务已启用"] == "去服务"
 
 
 def test_stock_form_fields_exclude_manual_name_input():
@@ -653,7 +704,7 @@ def test_update_manifest_skips_user_data_and_logs(tmp_path):
     package_root = tmp_path / "AStockBriefingManager-clean"
     (package_root / "daily_briefing" / "data").mkdir(parents=True)
     (package_root / "daily_briefing" / "logs").mkdir(parents=True)
-    (package_root / "AStockBriefingManager.exe").write_text("exe", encoding="utf-8")
+    (package_root / "AAA.exe").write_text("exe", encoding="utf-8")
     (package_root / "StartManager.bat").write_text("start", encoding="utf-8")
     (package_root / "daily_briefing" / ".env").write_text("secret", encoding="utf-8")
     (package_root / "daily_briefing" / ".env.example").write_text("example", encoding="utf-8")
@@ -665,7 +716,7 @@ def test_update_manifest_skips_user_data_and_logs(tmp_path):
 
     manifest = manager.build_update_file_manifest(package_root)
 
-    assert Path("AStockBriefingManager.exe") in manifest
+    assert Path("AAA.exe") in manifest
     assert Path("StartManager.bat") in manifest
     assert Path("daily_briefing/.env.example") in manifest
     assert Path("daily_briefing/.env") not in manifest
@@ -677,7 +728,7 @@ def test_find_update_package_root_supports_nested_clean_release(tmp_path):
     extract_root = tmp_path / "extract"
     package_root = extract_root / "AStockBriefingManager-clean"
     package_root.mkdir(parents=True)
-    (package_root / "AStockBriefingManager.exe").write_text("exe", encoding="utf-8")
+    (package_root / "AAA.exe").write_text("exe", encoding="utf-8")
 
     assert manager.find_update_package_root(extract_root) == package_root
 
@@ -702,10 +753,10 @@ def test_write_update_script_copies_manifest_without_sensitive_files(tmp_path):
     script = manager.write_update_script(
         package_root=package_root,
         install_root=install_root,
-        current_executable=install_root / "AStockBriefingManager.exe",
+        current_executable=install_root / "AAA.exe",
         current_pid=1234,
         manifest=[
-            Path("AStockBriefingManager.exe"),
+            Path("AAA.exe"),
             Path("StartManager.bat"),
             Path("daily_briefing/.env.example"),
         ],
@@ -716,7 +767,7 @@ def test_write_update_script_copies_manifest_without_sensitive_files(tmp_path):
     content = Path(script).read_text(encoding="utf-8")
 
     assert "$PidToWait = 1234" in content
-    assert "AStockBriefingManager.exe" in content
+    assert "AAA.exe" in content
     assert "StartManager.bat" in content
     assert ".env.example" in content
     assert "service_settings.json" not in content
@@ -818,6 +869,9 @@ def test_window_close_handler_is_registered(monkeypatch):
         def minsize(self, _width, _height):
             pass
 
+        def bind(self, _sequence, _callback):
+            pass
+
         def protocol(self, name, callback):
             self.protocol_calls.append((name, callback))
 
@@ -826,6 +880,7 @@ def test_window_close_handler_is_registered(monkeypatch):
     monkeypatch.setattr(manager.tk, "BooleanVar", lambda value=False: FakeVar(value))
     monkeypatch.setattr(manager.tk, "StringVar", lambda value="": FakeVar(value))
     monkeypatch.setattr(ServiceManagerApp, "_build_ui", lambda self: None)
+    monkeypatch.setattr(ServiceManagerApp, "_apply_window_icon", lambda self: None)
     monkeypatch.setattr(ServiceManagerApp, "refresh_async", lambda self: None)
     monkeypatch.setattr(ServiceManagerApp, "_schedule_refresh", lambda self: None)
 
@@ -1083,3 +1138,54 @@ def test_saving_changed_api_settings_requires_retest(monkeypatch):
     app.save_api_settings()
 
     assert app.api_test_status.value == "未测试"
+
+def test_build_briefing_command_supports_github_trending_mode():
+    command = build_briefing_command("github", send=True)
+
+    assert "--mode" in command
+    assert "github" in command
+    assert "--no-send" not in command
+
+    preview = build_briefing_command("github", send=False)
+
+    assert preview[-1] == "--no-send"
+
+
+def test_build_briefing_task_action_supports_github_trending_mode():
+    action = build_briefing_task_action("github")
+
+    assert action.arguments.endswith("--mode github")
+
+
+
+
+def test_autostart_registers_then_enables_tasks(monkeypatch):
+    calls = []
+    app = ServiceManagerApp.__new__(ServiceManagerApp)
+    app._write_startup_log = lambda _message: None
+    app._safe_log = lambda _message: None
+    monkeypatch.setattr(manager, "register_briefing_tasks", lambda: calls.append("register"))
+    monkeypatch.setattr(manager, "set_briefing_tasks_enabled", lambda enabled: calls.append(("enabled", enabled)))
+
+    app._enable_tasks_for_autostart()
+
+    assert calls == ["register", ("enabled", True)]
+
+
+def test_autostart_survives_task_registration_failure(monkeypatch):
+    messages = []
+    app = ServiceManagerApp.__new__(ServiceManagerApp)
+    app._write_startup_log = messages.append
+    app._safe_log = messages.append
+
+    def boom():
+        raise RuntimeError("no permission")
+
+    monkeypatch.setattr(manager, "register_briefing_tasks", boom)
+    monkeypatch.setattr(manager, "set_briefing_tasks_enabled", lambda enabled: None)
+
+    app._enable_tasks_for_autostart()
+
+    assert any("自动启用定时服务失败" in message for message in messages)
+def test_github_task_name_is_registered_for_service_toggles():
+    assert "GitHub每日推送" in manager.BRIEFING_TASK_NAMES

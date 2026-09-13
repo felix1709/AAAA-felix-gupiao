@@ -32,6 +32,12 @@ class NormalizedChatOpenAI(ChatOpenAI):
     stays small.
     """
 
+    def _get_request_payload(self, input_, *, stop=None, **kwargs):
+        payload = super()._get_request_payload(input_, stop=stop, **kwargs)
+        if "input" in payload:
+            payload["input"] = _sanitize_responses_input(payload["input"])
+        return payload
+
     def invoke(self, input, config=None, **kwargs):
         return normalize_content(super().invoke(input, config, **kwargs))
 
@@ -83,6 +89,31 @@ def _input_to_messages(input_: Any) -> list:
     if hasattr(input_, "to_messages"):
         return input_.to_messages()
     return []
+
+
+def _sanitize_responses_input(input_: Any) -> Any:
+    """Remove response-only metadata before replaying Responses API history."""
+    if isinstance(input_, dict):
+        if input_.get("type") == "reasoning" and not (
+            input_.get("id") or input_.get("encrypted_content")
+        ):
+            return None
+        return {
+            key: _sanitize_responses_input(value)
+            for key, value in input_.items()
+            if key != "phase"
+        }
+
+    if not isinstance(input_, list):
+        return input_
+
+    sanitized = []
+    for item in input_:
+        cleaned = _sanitize_responses_input(item)
+        if cleaned is None:
+            continue
+        sanitized.append(cleaned)
+    return sanitized
 
 
 class DeepSeekChatOpenAI(NormalizedChatOpenAI):

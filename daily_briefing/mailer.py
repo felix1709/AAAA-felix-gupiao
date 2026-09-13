@@ -9,7 +9,7 @@ import config
 import settings_store
 
 
-def send_html(subject: str, html: str, to: str = None) -> bool:
+def send_html(subject: str, html: str, to: str = None, from_name: str = "A股每日简报") -> bool:
     """发送一封 HTML 邮件。返回是否成功。"""
     recipients = settings_store.parse_recipients(to or config.SMTP_TO)
     if not recipients:
@@ -19,7 +19,7 @@ def send_html(subject: str, html: str, to: str = None) -> bool:
 
     msg = MIMEMultipart("alternative")
     msg["Subject"] = Header(subject, "utf-8")
-    msg["From"] = formataddr((str(Header("A股每日简报", "utf-8")), config.SMTP_USER))
+    msg["From"] = formataddr((str(Header(from_name, "utf-8")), config.SMTP_USER))
     msg["To"] = ", ".join(recipients)
 
     part_html = MIMEText(html, "html", "utf-8")

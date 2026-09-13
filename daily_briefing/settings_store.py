@@ -60,6 +60,13 @@ DEFAULT_EMAIL_SCHEDULE = [
         "title": "重要异动提醒",
         "content": "仅重要异动额外发信；两封至少间隔60分钟；全天最多3封",
     },
+    {
+        "mode": "github",
+        "task_name": "GitHub每日推送",
+        "time": "10:00",
+        "title": "GitHub Trending 每日十强",
+        "content": "抓取 GitHub Trending 日榜，按今日新增 Star 排序取前10，分析问题/用户/商业模式/潜力/风险",
+    },
 ]
 
 DEFAULT_STOCKS: list[dict[str, Any]] = []

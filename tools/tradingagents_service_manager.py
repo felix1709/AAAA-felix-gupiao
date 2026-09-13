@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import contextlib
 import json
 import os
 import re
@@ -18,6 +19,16 @@ from pathlib import Path
 from tkinter import messagebox, ttk
 
 import requests
+
+try:
+    from tools.win_tray import WinTrayIcon
+except ModuleNotFoundError:
+    from win_tray import WinTrayIcon
+
+try:
+    from tools import windows_startup
+except ModuleNotFoundError:
+    import windows_startup
 
 
 def resolve_project_root_from_anchors(anchors: Iterable[Path]) -> Path | None:
@@ -72,10 +83,10 @@ BRIEFING_SCRIPT = BRIEFING_DIR / "run_briefing.py"
 SETUP_TASKS_SCRIPT = BRIEFING_DIR / "setup_tasks.ps1"
 MANAGER_SCRIPT_NAME = "tradingagents_service_manager.py"
 LAUNCHER_SCRIPT_NAME = "start_service_manager.bat"
-PACKAGED_EXE_NAME = "astockbriefingmanager.exe"
-APP_TITLE = "A股每日简报服务管理器"
+PACKAGED_EXE_NAME = "aaa.exe"
+APP_TITLE = "AAA"
 APP_RUNNING_TITLE = f"{APP_TITLE} - 后台运行中"
-APP_VERSION = "0.2.4"
+APP_VERSION = "0.2.5"
 GITHUB_REPO_URL = "https://github.com/felix1709/AAAA-felix-gupiao"
 GITHUB_LATEST_RELEASE_API = (
     "https://api.github.com/repos/felix1709/AAAA-felix-gupiao/releases/latest"
@@ -312,7 +323,7 @@ def find_update_package_root(extract_root: Path) -> Path:
         if item.is_file() and item.name.casefold() == PACKAGED_EXE_NAME
     ]
     if not candidates:
-        raise ValueError("更新包中没有找到 AStockBriefingManager.exe。")
+        raise ValueError("更新包中没有找到 AAA.exe。")
     return sorted(candidates, key=lambda path: (len(path.parts), str(path).casefold()))[0]
 
 
@@ -698,7 +709,7 @@ def get_pythonw_path() -> str:
 
 
 def build_briefing_task_action(mode: str) -> BriefingTaskAction:
-    if mode not in {"premarket", "midday", "close", "monitor"}:
+    if mode not in {"premarket", "midday", "close", "monitor", "github"}:
         raise ValueError(f"Unsupported briefing mode: {mode}")
     if getattr(sys, "frozen", False):
         return BriefingTaskAction(
@@ -714,7 +725,7 @@ def build_briefing_task_action(mode: str) -> BriefingTaskAction:
 
 
 def build_briefing_command(mode: str, *, send: bool) -> list[str]:
-    if mode not in {"premarket", "midday", "close", "monitor"}:
+    if mode not in {"premarket", "midday", "close", "monitor", "github"}:
         raise ValueError(f"Unsupported briefing mode: {mode}")
     if getattr(sys, "frozen", False):
         command = [sys.executable, "--run-briefing", "--mode", mode]
@@ -840,6 +851,9 @@ New-BriefingTask -Name $items.midday.task_name -Mode "midday" -Triggers @($Midda
 $CloseTrigger = New-ScheduledTaskTrigger -Daily -At 18:00
 New-BriefingTask -Name $items.close.task_name -Mode "close" -Triggers @($CloseTrigger) -Description $items.close.description
 
+$GithubTrigger = New-ScheduledTaskTrigger -Daily -At 10:00
+New-BriefingTask -Name $items.github.task_name -Mode "github" -Triggers @($GithubTrigger) -Description $items.github.description
+
 $MorningRepetition = (New-ScheduledTaskTrigger -Once -At 09:35 -RepetitionInterval (New-TimeSpan -Minutes 5) -RepetitionDuration (New-TimeSpan -Minutes 115)).Repetition
 $MorningMonitor = New-ScheduledTaskTrigger -Daily -At 09:35
 $MorningMonitor.Repetition = $MorningRepetition
@@ -936,17 +950,29 @@ class CloseServiceDialog:
 
 
 class ServiceManagerApp:
-    def __init__(self, root: tk.Tk) -> None:
+    def __init__(self, root: tk.Tk, *, autostart: bool = False) -> None:
+        self.autostart = autostart
         self.root = root
         self.root.title(APP_TITLE)
         self.root.geometry("980x620")
         self.root.minsize(780, 520)
         self.root.protocol("WM_DELETE_WINDOW", self.on_close_request)
+        self.root.bind("<Unmap>", self._handle_unmap)
+        self._apply_window_icon()
 
         self.processes: list[ProcessRecord] = []
         self.task_records: list[ScheduledTaskRecord] = []
         self.settings = settings_store.load_settings()
         self.auto_refresh = tk.BooleanVar(value=True)
+        self.minimize_to_tray = tk.BooleanVar(
+            value=bool(self.settings.get("minimize_to_tray", False))
+        )
+        self.start_with_windows = tk.BooleanVar(
+            value=bool(self.settings.get("start_with_windows", False))
+        )
+        self.startup_status_text = tk.StringVar(value="")
+        self.tray: WinTrayIcon | None = None
+        self._last_geometry = ""
         self.status_text = tk.StringVar(value="检测中")
         self.status_color = tk.StringVar(value=BANANA_DARK_THEME["warning"])
         self.recipient_entry = tk.StringVar()
@@ -988,8 +1014,154 @@ class ServiceManagerApp:
         self.recent_log_text = tk.StringVar(value="暂无日志")
 
         self._build_ui()
+        self._sync_tray_mode()
         self.refresh_async()
         self._schedule_refresh()
+        if autostart:
+            self.root.after(400, self._run_startup_tasks)
+
+    def _window_icon_path(self) -> Path:
+        if getattr(sys, "frozen", False):
+            return Path(getattr(sys, "_MEIPASS", PROJECT_ROOT)) / "assets" / "red_bull.png"
+        return PROJECT_ROOT / "assets" / "red_bull.png"
+
+    def _apply_window_icon(self) -> None:
+        icon_path = self._window_icon_path()
+        if not icon_path.exists():
+            return
+        image = tk.PhotoImage(file=str(icon_path))
+        self._window_icon = image
+        self.root.iconphoto(True, image)
+
+    def _handle_unmap(self, _event=None) -> None:
+        if not self.minimize_to_tray.get():
+            return
+        if self.root.state() != "iconic":
+            return
+        self._last_geometry = self.root.geometry()
+        self.root.withdraw()
+
+    def restore_from_tray(self) -> None:
+        if self._last_geometry:
+            self.root.geometry(self._last_geometry)
+        self.root.deiconify()
+        self.root.lift()
+        self.root.focus_force()
+
+    def _tray_exit(self) -> None:
+        if self.tray is not None:
+            self.tray.stop()
+            self.tray = None
+        self._shutdown_service_and_exit()
+
+    def _sync_tray_mode(self) -> None:
+        if self.minimize_to_tray.get():
+            if self.tray is None:
+                self.tray = WinTrayIcon(
+                    self._window_icon_path().with_suffix(".ico"),
+                    on_show=self.restore_from_tray,
+                    on_exit=self._tray_exit,
+                    tk_root=self.root,
+                    tooltip=APP_TITLE,
+                )
+                self.tray.start()
+        elif self.tray is not None:
+            self.tray.stop()
+            self.tray = None
+
+    def _save_tray_preference(self) -> None:
+        self.settings["minimize_to_tray"] = bool(self.minimize_to_tray.get())
+        self.save_current_settings(silent=True)
+        self._sync_tray_mode()
+
+    def _sync_startup_widgets(self) -> None:
+        if not hasattr(self, "startup_status_text"):
+            return
+        if not windows_startup.is_windows():
+            self.startup_status_text.set("当前系统不支持开机自启")
+            return
+        self.startup_status_text.set(
+            "当前开机自启状态：已开启"
+            if windows_startup.is_enabled_for_current_user()
+            else "当前开机自启状态：已关闭"
+        )
+
+    def _save_startup_preference(self) -> None:
+        if not windows_startup.is_windows():
+            self.start_with_windows.set(False)
+            self.settings["start_with_windows"] = False
+            self.save_current_settings(silent=True)
+            self._sync_startup_widgets()
+            return
+
+        enabled = bool(self.start_with_windows.get())
+        try:
+            windows_startup.set_enabled(enabled)
+        except Exception as exc:  # noqa: BLE001 - keep the checkbox in sync with reality
+            actual = windows_startup.is_enabled_for_current_user()
+            self.start_with_windows.set(actual)
+            self.settings["start_with_windows"] = actual
+            self.save_current_settings(silent=True)
+            self._sync_startup_widgets()
+            messagebox.showerror("开机自启设置失败", f"写入 Windows 开机启动项失败：{exc}")
+            return
+
+        self.settings["start_with_windows"] = enabled
+        self.save_current_settings(silent=True)
+        self._sync_startup_widgets()
+        self._append_log(f"Windows 开机自动启动已{'开启' if enabled else '关闭'}。")
+
+    def _run_startup_tasks(self) -> None:
+        if not windows_startup.is_windows():
+            return
+        self._safe_log("检测到开机自启启动，开始执行自动任务。")
+        threading.Thread(target=self._enable_tasks_for_autostart, daemon=True).start()
+        threading.Thread(target=self._check_api_for_autostart, daemon=True).start()
+
+    def _enable_tasks_for_autostart(self) -> None:
+        try:
+            # 先补齐缺失任务（如升级后新增的 GitHub 每日推送），再统一启用。
+            register_briefing_tasks()
+            set_briefing_tasks_enabled(True)
+        except Exception as exc:  # noqa: BLE001 - autostart must never crash the app
+            self._write_startup_log(f"自动启用定时服务失败：{exc}")
+            self._safe_log(f"开机自启自动启用定时服务失败：{exc}")
+        else:
+            self._write_startup_log("开机自启已注册并自动启用定时服务。")
+            self._safe_log("开机自启已注册并自动启用定时服务。")
+
+    def _check_api_for_autostart(self) -> None:
+        api_settings = settings_store.settings_to_llm_api_settings(
+            self.settings,
+            env_base_url=config.LLM_BASE_URL,
+            env_api_key=config.LLM_API_KEY,
+            env_model=config.LLM_MODEL,
+        )
+        try:
+            result = llm_api.test_openai_compatible_connection(api_settings, timeout=15)
+        except Exception as exc:  # noqa: BLE001 - record but keep the app running
+            message = f"开机自启 API 检测异常：{exc}"
+        else:
+            message = f"开机自启 API 检测结果：{result.message}"
+        self._write_startup_log(message)
+        self._safe_log(message)
+
+    def _safe_log(self, message: str) -> None:
+        with contextlib.suppress(tk.TclError, RuntimeError, AttributeError):
+            self.root.after(0, lambda: self._append_log(message))
+
+    def _startup_log_path(self) -> Path:
+        return BRIEFING_DIR / "logs" / "startup.log"
+
+    def _write_startup_log(self, message: str) -> None:
+        try:
+            log_path = self._startup_log_path()
+            log_path.parent.mkdir(parents=True, exist_ok=True)
+            timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            with log_path.open("a", encoding="utf-8") as file:
+                file.write(f"[{timestamp}] {message}\n")
+        except OSError:
+            pass
 
     def _taskbar_title_for_status(self, status_text: str) -> str:
         if status_text.startswith("运行中"):
@@ -1002,8 +1174,8 @@ class ServiceManagerApp:
     def _nav_items(self) -> tuple[tuple[str, str], ...]:
         return (
             ("overview", "总览"),
-            ("service", "服务状态"),
-            ("recipients", "添加收件人邮箱"),
+            ("service", "服务"),
+            ("recipients", "邮箱"),
             ("stocks", "股票"),
             ("schedule", "定时"),
             ("settings", "设置"),
@@ -1018,6 +1190,15 @@ class ServiceManagerApp:
             ("至少有一只关注股票", "stocks"),
             ("定时服务已启用", "service"),
         )
+
+    def _checklist_button_label(self, page_key: str) -> str:
+        labels = {
+            "settings": "去设置",
+            "recipients": "去邮箱",
+            "stocks": "去股票",
+            "service": "去服务",
+        }
+        return labels.get(page_key, "去查看")
 
     def _stock_form_fields(self) -> tuple[tuple[str, str], ...]:
         return (
@@ -1312,7 +1493,7 @@ class ServiceManagerApp:
 
         title_block = ttk.Frame(header)
         title_block.pack(side="left", fill="x", expand=True)
-        ttk.Label(title_block, text="A股每日简报服务管理器", style="Title.TLabel").pack(
+        ttk.Label(title_block, text=APP_TITLE, style="Title.TLabel").pack(
             anchor="w"
         )
         ttk.Label(
@@ -1497,6 +1678,16 @@ class ServiceManagerApp:
         canvas.grid(row=0, column=0, sticky="nsew")
         scrollbar.grid(row=0, column=1, sticky="ns")
 
+        def _scroll_overview(event) -> None:
+            canvas.yview_scroll(-1 * (event.delta // 120), "units")
+
+        def _bind_mousewheel(widget) -> None:
+            widget.bind("<MouseWheel>", _scroll_overview)
+            for child in widget.winfo_children():
+                _bind_mousewheel(child)
+
+        canvas.bind("<MouseWheel>", _scroll_overview)
+
         cards = tk.Frame(scroll_body, bg=tokens["panel_bg"])
         cards.grid(row=0, column=0, sticky="ew")
         scroll_body.columnconfigure(0, weight=1)
@@ -1566,7 +1757,7 @@ class ServiceManagerApp:
             )
             button = tk.Button(
                 row,
-                text="去设置",
+                text=self._checklist_button_label(page_key),
                 relief="flat",
                 bg=tokens["card_alt_bg"],
                 fg=tokens["accent"],
@@ -1600,6 +1791,8 @@ class ServiceManagerApp:
             anchor="nw",
             justify="left",
         ).pack(fill="both", expand=True, pady=(8, 0))
+
+        _bind_mousewheel(scroll_body)
 
     def _build_service_tab(self, parent: ttk.Frame) -> None:
         controls = ttk.Frame(parent, style="Content.TFrame")
@@ -1852,6 +2045,7 @@ class ServiceManagerApp:
             ("midday", "生成午间预览"),
             ("close", "生成收盘预览"),
             ("monitor", "运行监控预览"),
+            ("github", "生成 GitHub 预览"),
         ):
             ttk.Button(
                 preview,
@@ -1865,6 +2059,7 @@ class ServiceManagerApp:
             ("premarket", "发送盘前"),
             ("midday", "发送午间"),
             ("close", "发送收盘"),
+            ("github", "发送 GitHub"),
         ):
             ttk.Button(
                 send_row,
@@ -2014,6 +2209,55 @@ class ServiceManagerApp:
             anchor="w",
         ).pack(side="left", padx=(10, 0), fill="x", expand=True)
 
+        system_panel = tk.Frame(
+            parent,
+            bg=tokens["card_bg"],
+            highlightbackground=tokens["border"],
+            highlightthickness=1,
+            padx=14,
+            pady=12,
+        )
+        system_panel.grid(row=3, column=0, sticky="ew", pady=(12, 0))
+        tk.Label(
+            system_panel,
+            text="系统行为",
+            bg=tokens["card_bg"],
+            fg=tokens["accent"],
+            font=("Segoe UI", 11, "bold"),
+            anchor="w",
+        ).grid(row=0, column=0, sticky="ew")
+        ttk.Checkbutton(
+            system_panel,
+            text="最小化时缩至系统托盘",
+            variable=self.minimize_to_tray,
+            command=self._save_tray_preference,
+        ).grid(row=1, column=0, sticky="w", pady=(8, 0))
+        if windows_startup.is_windows():
+            ttk.Checkbutton(
+                system_panel,
+                text="Windows开机自动启动",
+                variable=self.start_with_windows,
+                command=self._save_startup_preference,
+            ).grid(row=2, column=0, sticky="w", pady=(8, 0))
+            tk.Label(
+                system_panel,
+                textvariable=self.startup_status_text,
+                bg=tokens["card_bg"],
+                fg=tokens["muted"],
+                font=("Segoe UI", 9),
+                anchor="w",
+            ).grid(row=3, column=0, sticky="w", pady=(6, 0))
+        else:
+            tk.Label(
+                system_panel,
+                text="开机自启仅在 Windows 上可用。",
+                bg=tokens["card_bg"],
+                fg=tokens["muted"],
+                font=("Segoe UI", 9),
+                anchor="w",
+            ).grid(row=2, column=0, sticky="w", pady=(8, 0))
+        self._sync_startup_widgets()
+
     def _build_smtp_settings_panel(self, parent: ttk.Frame, row: int) -> None:
         tokens = self._theme_tokens()
         smtp_panel = tk.Frame(
@@ -2121,6 +2365,7 @@ class ServiceManagerApp:
         self._sync_schedule_table()
         self._sync_api_widgets()
         self._sync_smtp_widgets()
+        self._sync_startup_widgets()
         self._sync_overview()
 
     def _sync_recipient_list(self) -> None:
@@ -2856,10 +3101,11 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help=argparse.SUPPRESS,
     )
-    parser.add_argument("--mode", choices=["premarket", "midday", "close", "monitor"])
+    parser.add_argument("--mode", choices=["premarket", "midday", "close", "monitor", "github"])
     parser.add_argument("--date", default="")
     parser.add_argument("--no-send", action="store_true")
     parser.add_argument("--force", action="store_true")
+    parser.add_argument("--autostart", action="store_true", help=argparse.SUPPRESS)
     args = parser.parse_args(argv)
 
     if args.run_briefing:
@@ -2875,7 +3121,7 @@ def main(argv: list[str] | None = None) -> int:
         return print_status_once()
 
     root = tk.Tk()
-    ServiceManagerApp(root)
+    ServiceManagerApp(root, autostart=args.autostart)
     root.mainloop()
     return 0
 

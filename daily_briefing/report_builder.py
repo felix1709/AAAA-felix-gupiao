@@ -379,16 +379,18 @@ def _style() -> str:
       .muted{color:#718096;font-size:12px;} .ok{color:#0f766e;} .alert{color:#b91c1c;}
       .tag{display:inline-block;background:#fee2e2;color:#b91c1c;border-radius:4px;padding:1px 5px;margin:0 2px;font-size:12px;}
       .footer{margin-top:28px;padding-top:12px;border-top:1px dashed #cbd5e1;color:#64748b;font-size:12px;}
+      .repo{margin:18px 0;padding-bottom:14px;border-bottom:1px solid #eef2f7;}
     </style>
     """
 
 
-def _page(title: str, body: str) -> str:
+def _page(title: str, body: str, disclaimer: str | None = None) -> str:
+    footer = disclaimer or DISCLAIMER
     return (
         "<!doctype html><html lang='zh-CN'><head><meta charset='utf-8'>"
         f"<title>{_esc(title)}</title>{_style()}</head><body><div class='container'>"
         f"<h1>{_esc(title)}</h1><p class='muted'>生成时间：{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}</p>"
-        f"{body}<div class='footer'>{DISCLAIMER}</div></div></body></html>"
+        f"{body}<div class='footer'>{_esc(footer)}</div></div></body></html>"
     )
 
 

@@ -4,15 +4,18 @@ openai provider must fall back to Chat Completions (#1024)."""
 from __future__ import annotations
 
 import pytest
+from langchain_core.messages import AIMessage, HumanMessage
 
 from tradingagents.llm_clients.openai_client import (
+    NormalizedChatOpenAI,
     OpenAIClient,
     _is_native_openai_base_url,
+    _sanitize_responses_input,
 )
 
 
 @pytest.mark.unit
-class NativeBaseUrlTests:
+class TestNativeBaseUrl:
     def test_unset_is_native(self):
         assert _is_native_openai_base_url(None) is True
         assert _is_native_openai_base_url("") is True
@@ -28,7 +31,7 @@ class NativeBaseUrlTests:
 
 
 @pytest.mark.unit
-class ResponsesApiSelectionTests:
+class TestResponsesApiSelection:
     def test_native_openai_enables_responses_api(self, monkeypatch):
         monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
         llm = OpenAIClient("gpt-5.5", provider="openai").get_llm()
@@ -40,4 +43,72 @@ class ResponsesApiSelectionTests:
             "gpt-5.5", base_url="http://localhost:1234/v1", provider="openai"
         ).get_llm()
         # use_responses_api should be absent/False so the client speaks Chat Completions.
-        assert getattr(llm, "use_responses_api", False) is False
+        assert getattr(llm, "use_responses_api", False) in (False, None)
+
+
+@pytest.mark.unit
+def test_responses_payload_drops_reasoning_output_items_with_phase():
+    """OpenAI Responses API input rejects response-only reasoning fields."""
+    client = NormalizedChatOpenAI(
+        model="gpt-5.5",
+        api_key="sk-test",
+        use_responses_api=True,
+    )
+    payload = client._get_request_payload(
+        [
+            AIMessage(
+                content=[
+                    {
+                        "type": "reasoning",
+                        "summary": [{"type": "summary_text", "text": "checked trend"}],
+                        "phase": "analysis",
+                    },
+                    {"type": "text", "text": "Buy-side case is stronger."},
+                ]
+            ),
+            HumanMessage(content="Continue."),
+        ]
+    )
+
+    assert payload["input"] == [
+        {
+            "type": "message",
+            "content": [
+                {
+                    "type": "output_text",
+                    "text": "Buy-side case is stronger.",
+                    "annotations": [],
+                }
+            ],
+            "role": "assistant",
+        },
+        {"content": "Continue.", "role": "user", "type": "message"},
+    ]
+
+
+@pytest.mark.unit
+def test_responses_input_sanitizer_removes_phase_from_single_item():
+    """A single Responses input item must not keep response-only phase fields."""
+    assert _sanitize_responses_input(
+        {
+            "type": "message",
+            "role": "assistant",
+            "phase": "final_answer",
+            "content": [
+                {
+                    "type": "output_text",
+                    "text": "Done.",
+                    "phase": "final_answer",
+                }
+            ],
+        }
+    ) == {
+        "type": "message",
+        "role": "assistant",
+        "content": [
+            {
+                "type": "output_text",
+                "text": "Done.",
+            }
+        ],
+    }

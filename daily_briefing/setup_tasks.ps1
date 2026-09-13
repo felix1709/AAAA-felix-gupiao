@@ -1,4 +1,4 @@
-param(
+﻿param(
     [string]$Root = (Split-Path -Parent $PSScriptRoot),
     [string]$Runner = ""
 )
@@ -60,5 +60,9 @@ $AfternoonRepetition = (New-ScheduledTaskTrigger -Once -At 13:05 -RepetitionInte
 $AfternoonMonitor = New-ScheduledTaskTrigger -Daily -At 13:05
 $AfternoonMonitor.Repetition = $AfternoonRepetition
 New-BriefingTask -Name "A股盘中监控" -Mode "monitor" -Triggers @($MorningMonitor, $AfternoonMonitor) -Description "交易时段每 5 分钟检查持仓与指数异动，触发后发送提醒"
+
+# GitHub Trending 每日推送：每天 10:00（不区分交易日）。
+$GithubTrigger = New-ScheduledTaskTrigger -Daily -At 10:00
+New-BriefingTask -Name "GitHub每日推送" -Mode "github" -Triggers @($GithubTrigger) -Description "每天 10:00 抓取 GitHub Trending 日榜前10并发送中文分析邮件"
 
 Write-Host "全部任务注册完成。可在“任务计划程序”中查看。"

@@ -23,7 +23,7 @@ The interface should feel like a compact monitoring console rather than a market
 - Fix the Overview page by using a scrollable body and a two-column status-card grid.
 - Keep the setup checklist and recent logs as full-width panels below the cards.
 - Rename the `API` navigation item to `设置`.
-- Make Settings compact: Base URL, API Key, Model, save/test actions, API status, and update check in one dense page.
+- Make Settings compact but always reachable: Base URL, API Key, Model, save/test actions, API status, SMTP, update check, and system toggles stack as cards in one scrollable page, so a short window never clips or squashes the API form.
 - Add a manual `检测更新` action that checks the GitHub latest release and reports whether a newer version exists.
 - Enable `下载并安装` only when the latest release contains `AStockBriefingManager-clean.zip`; keep it disabled in source/debug mode or when no installable asset exists.
 - Keep the close-window behavior: when background service is active, ask whether to minimize to taskbar, stop service and exit, or cancel.

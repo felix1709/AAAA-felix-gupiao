@@ -1,3 +1,4 @@
+import sys
 import zipfile
 from pathlib import Path
 
@@ -528,6 +529,79 @@ def test_api_action_buttons_stay_in_header_row_to_avoid_clipping():
     assert layout["row"] == 0
     assert layout["column"] == 2
     assert layout["columnspan"] == 2
+
+
+def _open_settings_layout_window(monkeypatch, geometry: str = "920x620"):
+    """打开真实 Tk 窗口做布局检查；没有图形界面时直接跳过。"""
+    tk = pytest.importorskip("tkinter")
+    try:
+        root = tk.Tk()
+    except tk.TclError:
+        pytest.skip("当前环境没有可用的图形界面")
+    root.attributes("-alpha", 0.0)
+    monkeypatch.setattr(manager.settings_store, "load_settings", lambda: {})
+    monkeypatch.setattr(ServiceManagerApp, "refresh_async", lambda self: None)
+    monkeypatch.setattr(ServiceManagerApp, "_schedule_refresh", lambda self: None)
+    app = ServiceManagerApp(root)
+    app._show_page("settings")
+    root.geometry(geometry)
+    for _ in range(3):
+        root.update_idletasks()
+        root.update()
+    return root, app
+
+
+def _settings_scroll_area(app, tk):
+    body = app.pages["settings"].winfo_children()[1]
+    canvases = [child for child in body.winfo_children() if isinstance(child, tk.Canvas)]
+    assert len(canvases) == 1, "设置页需要一个可滚动的容器"
+    canvas = canvases[0]
+    return canvas, canvas.winfo_children()[0]
+
+
+def test_settings_page_keeps_api_panel_visible_in_a_short_window(monkeypatch):
+    root, app = _open_settings_layout_window(monkeypatch)
+    try:
+        tk = sys.modules["tkinter"]
+        _canvas, content = _settings_scroll_area(app, tk)
+        api_panel = content.winfo_children()[0]
+
+        assert api_panel.winfo_height() >= api_panel.winfo_reqheight()
+    finally:
+        root.destroy()
+
+
+def test_settings_page_scrolls_to_every_panel_with_the_mouse_wheel(monkeypatch):
+    from tkinter import ttk
+
+    root, app = _open_settings_layout_window(monkeypatch)
+    try:
+        tk = sys.modules["tkinter"]
+        canvas, content = _settings_scroll_area(app, tk)
+        assert canvas.bbox("all")[3] > canvas.winfo_height()
+
+        canvas.yview_moveto(1.0)
+        root.update()
+        assert canvas.yview()[1] == pytest.approx(1.0, abs=0.01)
+        last_panel = content.winfo_children()[-1]
+        assert last_panel.winfo_y() + last_panel.winfo_height() <= canvas.canvasy(canvas.winfo_height()) + 1
+
+        canvas.yview_moveto(0.0)
+        root.update()
+        assert canvas.yview()[0] == pytest.approx(0.0, abs=0.01)
+
+        api_panel = content.winfo_children()[0]
+        api_key_entry = next(
+            child
+            for child in api_panel.winfo_children()
+            if isinstance(child, ttk.Entry)
+            and str(child.cget("textvariable")) == str(app.api_vars["api_key"])
+        )
+        api_key_entry.event_generate("<MouseWheel>", delta=-120)
+        root.update()
+        assert canvas.yview()[0] > 0
+    finally:
+        root.destroy()
 
 
 def test_checklist_routes_sender_to_settings_and_recipients_to_recipient_page():

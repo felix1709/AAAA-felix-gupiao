@@ -86,7 +86,7 @@ LAUNCHER_SCRIPT_NAME = "start_service_manager.bat"
 PACKAGED_EXE_NAME = "aaa.exe"
 APP_TITLE = "AAA"
 APP_RUNNING_TITLE = f"{APP_TITLE} - 后台运行中"
-APP_VERSION = "0.2.5"
+APP_VERSION = "0.2.6"
 GITHUB_REPO_URL = "https://github.com/felix1709/AAAA-felix-gupiao"
 GITHUB_LATEST_RELEASE_API = (
     "https://api.github.com/repos/felix1709/AAAA-felix-gupiao/releases/latest"
@@ -1605,6 +1605,41 @@ class ServiceManagerApp:
         body.rowconfigure(0, weight=1)
         return body
 
+    def _create_scrollable_body(self, parent: ttk.Frame) -> tuple[tk.Frame, tk.Canvas]:
+        """Add a vertical scroll area to ``parent`` and return the frame that holds the cards."""
+        tokens = self._theme_tokens()
+        parent.columnconfigure(0, weight=1)
+        parent.rowconfigure(0, weight=1)
+
+        canvas = tk.Canvas(parent, bg=tokens["panel_bg"], highlightthickness=0, borderwidth=0)
+        scrollbar = ttk.Scrollbar(parent, orient="vertical", command=canvas.yview)
+        content = tk.Frame(canvas, bg=tokens["panel_bg"])
+        content.columnconfigure(0, weight=1)
+        content_window = canvas.create_window((0, 0), window=content, anchor="nw")
+
+        content.bind(
+            "<Configure>", lambda _event: canvas.configure(scrollregion=canvas.bbox("all"))
+        )
+        canvas.bind(
+            "<Configure>", lambda event: canvas.itemconfigure(content_window, width=event.width)
+        )
+        canvas.configure(yscrollcommand=scrollbar.set)
+        canvas.grid(row=0, column=0, sticky="nsew")
+        scrollbar.grid(row=0, column=1, sticky="ns")
+        return content, canvas
+
+    def _bind_page_mousewheel(self, widget: tk.Misc, canvas: tk.Canvas) -> None:
+        """Scroll ``canvas`` with the wheel no matter which child the pointer is over."""
+
+        def scroll_page(event) -> None:
+            canvas.yview_scroll(-1 * (event.delta // 120), "units")
+
+        pending = [widget]
+        while pending:
+            target = pending.pop()
+            target.bind("<MouseWheel>", scroll_page, add="+")
+            pending.extend(target.winfo_children())
+
     def _show_page(self, page_key: str) -> None:
         tokens = self._theme_tokens()
         for key, page in self.pages.items():
@@ -2072,10 +2107,10 @@ class ServiceManagerApp:
 
     def _build_api_tab(self, parent: ttk.Frame) -> None:
         tokens = self._theme_tokens()
-        parent.columnconfigure(0, weight=1)
+        body, scroll_canvas = self._create_scrollable_body(parent)
 
         api_panel = tk.Frame(
-            parent,
+            body,
             bg=tokens["card_bg"],
             highlightbackground=tokens["border"],
             highlightthickness=1,
@@ -2155,10 +2190,10 @@ class ServiceManagerApp:
                     pady=4,
                 )
 
-        self._build_smtp_settings_panel(parent, 1)
+        self._build_smtp_settings_panel(body, 1)
 
         update_panel = tk.Frame(
-            parent,
+            body,
             bg=tokens["card_bg"],
             highlightbackground=tokens["border"],
             highlightthickness=1,
@@ -2210,7 +2245,7 @@ class ServiceManagerApp:
         ).pack(side="left", padx=(10, 0), fill="x", expand=True)
 
         system_panel = tk.Frame(
-            parent,
+            body,
             bg=tokens["card_bg"],
             highlightbackground=tokens["border"],
             highlightthickness=1,
@@ -2257,6 +2292,7 @@ class ServiceManagerApp:
                 anchor="w",
             ).grid(row=2, column=0, sticky="w", pady=(8, 0))
         self._sync_startup_widgets()
+        self._bind_page_mousewheel(body, scroll_canvas)
 
     def _build_smtp_settings_panel(self, parent: ttk.Frame, row: int) -> None:
         tokens = self._theme_tokens()

@@ -1,6 +1,7 @@
 """报告生成：把数据组装成 HTML，并调用 OpenAI 兼容接口生成简短点评。"""
 import html
 import json
+import logging
 from datetime import datetime
 
 import config
@@ -41,9 +42,14 @@ def _safe_list(value) -> list:
     return value if isinstance(value, list) else []
 
 
-def llm_chat(system: str, user: str, max_tokens: int = 700) -> str | None:
-    """调用 OpenAI 兼容 Chat Completions 接口；失败时返回 None。"""
+def llm_chat(system: str, user: str, max_tokens: int = 700, timeout: int = 60) -> str | None:
+    """调用 OpenAI 兼容 Chat Completions 接口；失败时返回 None 并写入日志。
+
+    注意：max_tokens 同时限制“思考过程”和“正式回答”（推理型模型）。
+    额度被思考占满时接口会返回空内容或半截结果，调用方需要据此重试或降级。
+    """
     if not config.LLM_API_KEY or not config.LLM_BASE_URL or not config.LLM_MODEL:
+        logging.warning("未配置 LLM 接口（Base URL / API Key / 模型），跳过 AI 点评。")
         return None
     url = config.LLM_BASE_URL.rstrip("/") + "/chat/completions"
     payload = {
@@ -64,13 +70,34 @@ def llm_chat(system: str, user: str, max_tokens: int = 700) -> str | None:
                 "Content-Type": "application/json",
             },
             json=payload,
-            timeout=60,
+            timeout=timeout,
         )
         resp.raise_for_status()
         data = resp.json()
-        return data["choices"][0]["message"]["content"].strip()
-    except Exception:
+    except requests.HTTPError as exc:
+        logging.warning("LLM 接口返回错误：%s %s", exc, str(getattr(resp, "text", "") or "").strip()[:200])
         return None
+    except requests.RequestException as exc:
+        logging.warning("LLM 请求失败：%s", exc)
+        return None
+    except ValueError:
+        logging.warning("LLM 返回内容不是 JSON。")
+        return None
+
+    try:
+        choice = data["choices"][0]
+        content = choice["message"]["content"] or ""
+    except (KeyError, IndexError, TypeError):
+        logging.warning("LLM 返回结构不符合预期：%s", str(data)[:200])
+        return None
+    if not content.strip():
+        logging.warning(
+            "LLM 没有返回可用内容（finish_reason=%s，max_tokens=%s），可能是额度被思考过程占满。",
+            choice.get("finish_reason"),
+            max_tokens,
+        )
+        return None
+    return content.strip()
 
 
 def deepseek_chat(system: str, user: str, max_tokens: int = 700) -> str | None:
@@ -415,7 +442,7 @@ def _premarket_comment(payload: dict) -> str | None:
     return deepseek_chat(
         "你是A股开盘前简报编辑。请用150字以内给出今日早评，重点：外盘影响、主要风险、持仓需注意事项。语气克制，不喊单，不承诺收益，不构成投资建议。",
         compact,
-        max_tokens=500,
+        max_tokens=1500,
     )
 
 
@@ -430,7 +457,7 @@ def _midday_comment(payload: dict) -> str | None:
     return deepseek_chat(
         "你是A股午间复盘编辑。请用150字以内总结上午盘面、板块轮动和风险，语气克制，不喊单，不承诺收益，不构成投资建议。",
         compact,
-        max_tokens=500,
+        max_tokens=1500,
     )
 
 
@@ -450,7 +477,7 @@ def _close_comment(payload: dict) -> str | None:
     return deepseek_chat(
         "你是A股收盘总结编辑。请用150字以内总结今日收盘、资金与风险，并提醒关注明日。语气克制，不喊单，不承诺收益，不构成投资建议。",
         compact,
-        max_tokens=500,
+        max_tokens=1500,
     )
 
 

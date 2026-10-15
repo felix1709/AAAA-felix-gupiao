@@ -1,6 +1,7 @@
 """GitHub Trending 每日榜单分析与中文 HTML 邮件生成。"""
 import html
 import json
+import logging
 import re
 from datetime import datetime
 
@@ -27,6 +28,17 @@ _ANALYSIS_SYSTEM = (
     "你是一名资深科技行业分析师，熟悉开源生态与软件商业模式。"
     "请依据给定信息做克制、务实的判断，不夸大、不编造事实。只输出一个 JSON 对象，不要输出任何其他文字。"
 )
+
+logger = logging.getLogger(__name__)
+
+# 该模型是推理型：max_tokens 同时限制“思考过程”和“正式回答”。
+# 一次问太多项目时，思考可能吃掉全部额度，回答会变成空字符串或半截 JSON，
+# 十个项目的分析就整份丢失（表现：邮件里五个栏目全是“AI 分析暂不可用”）。
+# 因此分批提问、按批重试，并给足额度与超时时间。
+_ANALYSIS_BATCH = 5
+_ANALYSIS_ATTEMPTS = 2
+_ANALYSIS_MAX_TOKENS = 8000
+_ANALYSIS_TIMEOUT = 180
 
 
 # --------------------------------------------------------------------------
@@ -140,7 +152,8 @@ def _parse_analyses(raw: str | None) -> dict[str, dict]:
     return result
 
 
-def _analyze(projects: list[dict], llm=report_builder.llm_chat) -> dict[str, dict]:
+def _analyze_batch(projects: list[dict], llm) -> dict[str, dict]:
+    """请求一批项目的分析；未拿全时按次数重试，返回已拿到的部分（可能为空）。"""
     compact = [
         {
             "repo": item["full_name"],
@@ -162,12 +175,42 @@ def _analyze(projects: list[dict], llm=report_builder.llm_chat) -> dict[str, dic
         }
     }
     user_prompt = (
-        "以下是 GitHub Trending 今日榜上新增 Star 最多的项目，请逐个分析。\n"
+        "以下是 GitHub Trending 今日榜上的项目，请逐个分析。\n"
         f"返回 JSON，key 必须与 repo 字段完全一致，结构示例：\n"
         f"{json.dumps(schema, ensure_ascii=False)}\n\n"
         f"项目数据：\n{json.dumps(compact, ensure_ascii=False)}"
     )
-    return _parse_analyses(llm(_ANALYSIS_SYSTEM, user_prompt, max_tokens=4000))
+    collected: dict[str, dict] = {}
+    for attempt in range(1, _ANALYSIS_ATTEMPTS + 1):
+        raw = llm(_ANALYSIS_SYSTEM, user_prompt, max_tokens=_ANALYSIS_MAX_TOKENS, timeout=_ANALYSIS_TIMEOUT)
+        collected.update(_parse_analyses(raw))
+        missing = [item["full_name"] for item in projects if item["full_name"] not in collected]
+        if not missing:
+            return collected
+        logger.warning(
+            "第 %d/%d 次 AI 分析请求没有拿全本批项目，仍缺：%s",
+            attempt,
+            _ANALYSIS_ATTEMPTS,
+            "、".join(missing),
+        )
+    return collected
+
+
+def _analyze(projects: list[dict], llm=report_builder.llm_chat) -> dict[str, dict]:
+    """分批获取全部项目的分析结果；单批失败不会影响其它批次。"""
+    result: dict[str, dict] = {}
+    for start in range(0, len(projects), _ANALYSIS_BATCH):
+        result.update(_analyze_batch(projects[start : start + _ANALYSIS_BATCH], llm))
+    missing = [item["full_name"] for item in projects if item["full_name"] not in result]
+    if missing:
+        logger.warning(
+            "本次有 %d 个项目没有取得 AI 分析，邮件里会显示占位提示：%s",
+            len(missing),
+            "、".join(missing),
+        )
+    else:
+        logger.info("GitHub 分析完成：%d 个项目全部取得 AI 分析。", len(projects))
+    return result
 
 
 # --------------------------------------------------------------------------
